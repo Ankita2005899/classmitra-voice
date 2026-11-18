@@ -39,3 +39,9 @@ $("go").addEventListener("click", async () => {
     $("go").disabled = false;
   }
 });
+
+$("next").addEventListener("click", () => {
+  sessionStorage.setItem("cm_text", $("text").value.trim());
+  sessionStorage.setItem("cm_lang", $("lang").value);
+  location.href = "/screen";
+});
