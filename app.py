@@ -1,0 +1,102 @@
+import os, uuid, time, glob, asyncio
+from flask import Flask, render_template, request, jsonify
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types, errors
+import edge_tts
+
+load_dotenv()
+app = Flask(__name__)
+
+AUDIO_DIR = os.path.join(app.static_folder, "audio")
+os.makedirs(AUDIO_DIR, exist_ok=True)
+
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
+MAX_CHARS = 1500
+
+# tone -> (persona instruction, english voice, hindi voice)
+TONES = {
+    "teacher": (
+        "a warm, patient school teacher. Explain step by step, give one simple example, end with a one-line recap.",
+        "en-IN-NeerjaNeural", "hi-IN-SwaraNeural"),
+    "farmer": (
+        "a wise, down-to-earth village farmer. Explain using farming, soil, seasons, crops and rural life examples.",
+        "en-IN-PrabhatNeural", "hi-IN-MadhurNeural"),
+    "cricketer": (
+        "an energetic cricketer and commentator. Explain using cricket analogies: batting, bowling, field, match pressure.",
+        "en-IN-PrabhatNeural", "hi-IN-MadhurNeural"),
+    "shopkeeper": (
+        "a friendly neighbourhood shopkeeper. Explain using everyday buying, selling, profit and bargaining examples.",
+        "en-IN-NeerjaNeural", "hi-IN-SwaraNeural"),
+    "storyteller": (
+        "a grandparent telling a short story. Explain the idea through a tiny story with a moral.",
+        "en-IN-NeerjaNeural", "hi-IN-SwaraNeural"),
+}
+LANGS = {"english": "English", "hindi": "Hindi (Devanagari script)"}
+
+
+def cleanup_old_audio(max_age=3600):
+    for f in glob.glob(os.path.join(AUDIO_DIR, "*.mp3")):
+        if time.time() - os.path.getmtime(f) > max_age:
+            os.remove(f)
+
+
+def make_script(text, tone, lang):
+    persona = TONES[tone][0]
+    system = (
+        f"You are {persona} Re-explain the user's text in your own voice, in {LANGS[lang]}. "
+        "Keep the facts correct. Keep it under 150 words. "
+        "Output plain spoken text only: no markdown, no bullet points, no emojis, no stage directions."
+    )
+    resp = client.models.generate_content(
+        model=MODEL, contents=text,
+        config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=700),
+    )
+    return (resp.text or "").strip()
+
+
+async def make_audio(script, voice, path):
+    await edge_tts.Communicate(script, voice).save(path)
+
+
+@app.route("/")
+def index():
+    return render_template("index.html", tones=list(TONES.keys()))
+
+
+@app.route("/generate", methods=["POST"])
+def generate():
+    data = request.get_json(silent=True) or {}
+    text = (data.get("text") or "").strip()
+    tone = data.get("tone", "teacher")
+    lang = data.get("language", "english")
+
+    if not text:
+        return jsonify(error="Please enter some text."), 400
+    if len(text) > MAX_CHARS:
+        return jsonify(error=f"Text is too long. Keep it under {MAX_CHARS} characters."), 400
+    if tone not in TONES or lang not in LANGS:
+        return jsonify(error="Invalid tone or language."), 400
+
+    try:
+        script = make_script(text, tone, lang)
+        voice = TONES[tone][1] if lang == "english" else TONES[tone][2]
+        cleanup_old_audio()
+        name = f"{uuid.uuid4().hex}.mp3"
+        asyncio.run(make_audio(script, voice, os.path.join(AUDIO_DIR, name)))
+        return jsonify(script=script, audio_url=f"/static/audio/{name}")
+    except errors.APIError as e:
+        if e.code in (400, 401, 403):
+            return jsonify(error="Invalid or missing GEMINI_API_KEY."), 500
+        if e.code == 429:
+            return jsonify(error="Free limit reached. Wait a minute and try again."), 429
+        app.logger.exception(e)
+        return jsonify(error="Gemini error. Please try again."), 500
+    except Exception as e:
+        app.logger.exception(e)
+        return jsonify(error="Something went wrong. Please try again."), 500
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
