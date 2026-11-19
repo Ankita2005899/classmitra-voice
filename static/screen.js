@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-let theme = "sunset";
+let theme = "navy";
 
 $("text").value = sessionStorage.getItem("cm_text") || "";
 $("lang").value = sessionStorage.getItem("cm_lang") || "english";
@@ -20,7 +20,7 @@ $("themes").addEventListener("click", (e) => {
   });
 });
 
-const THEMES = ["sunset", "ocean", "forest", "royal", "night"];
+const THEMES = ["navy", "slate", "blue", "emerald", "burgundy", "charcoal"];
 const el = (tag, cls, text) => {
   const n = document.createElement(tag);
   if (cls) n.className = cls;
