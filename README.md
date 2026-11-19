@@ -3,6 +3,8 @@
 Enter text, pick a tone (teacher, farmer, cricketer, shopkeeper, storyteller), get an audio explanation.
 Flask + Gemini API (script) + edge-tts (audio).
 
+Pages: `/` = text to audio, `/screen` = text to slide images (ZIP download).
+
 ## Run locally
 ```
 python -m venv venv

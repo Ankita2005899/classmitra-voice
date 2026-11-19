@@ -1,4 +1,4 @@
-import os, uuid, time, glob, asyncio, json
+import os, uuid, time, glob, asyncio, json, base64, urllib.request, urllib.parse
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 from google import genai
@@ -134,6 +134,8 @@ def analyze():
         '"key_points" (list), "advantages" (list), "disadvantages" (list), '
         '"applications" (list), "example" (string). '
         "Every list item: max 14 words, starting with one fitting emoji. "
+        "Also add \"image_query\" (2-3 English words describing a photo that fits the topic) and "
+        "\"example_image_query\" (2-3 English words for a photo that fits the example). "
         "Max 5 items per list. If the text does not support a section, use an empty list or empty string. "
         "Do not invent facts that are not supported by the text or common knowledge."
     )
@@ -164,7 +166,37 @@ def analyze():
         key_points=lst("key_points"), advantages=lst("advantages"),
         disadvantages=lst("disadvantages"), applications=lst("applications"),
         example=str(d.get("example") or "").strip(),
+        image_query=str(d.get("image_query") or "").strip()[:60],
+        example_image_query=str(d.get("example_image_query") or "").strip()[:60],
     )
+
+
+_img_cache = {}
+
+
+@app.route("/image")
+def image():
+    """Optional photo from Pexels (free key). Returns {url: data-URI} or {url: null}."""
+    q = (request.args.get("q") or "").strip()[:60]
+    key = os.getenv("PEXELS_API_KEY", "").strip()
+    if not q or not key or key.startswith("paste_"):
+        return jsonify(url=None)
+    if q in _img_cache:
+        return jsonify(url=_img_cache[q])
+    try:
+        api = "https://api.pexels.com/v1/search?per_page=1&orientation=landscape&query=" + urllib.parse.quote(q)
+        req = urllib.request.Request(api, headers={"Authorization": key, "User-Agent": "ClassMitra"})
+        with urllib.request.urlopen(req, timeout=8) as r:
+            photos = json.load(r).get("photos") or []
+        if not photos:
+            return jsonify(url=None)
+        with urllib.request.urlopen(photos[0]["src"]["large"], timeout=10) as r:
+            uri = "data:image/jpeg;base64," + base64.b64encode(r.read()).decode()
+        _img_cache[q] = uri
+        return jsonify(url=uri)
+    except Exception as e:
+        app.logger.warning("image fetch failed: %s", e)
+        return jsonify(url=None)
 
 
 if __name__ == "__main__":

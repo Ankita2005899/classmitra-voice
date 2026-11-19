@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClassMitra Text to Screen</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='screen.css') }}">
+</head>
+<body>
+<main class="wide">
+  <a class="back" href="/">&larr; Back to audio</a>
+  <h1>Text to Screen</h1>
+  <p class="sub">Your text becomes a clean slide deck: cover, key points, pros and cons, uses and an example. Download every slide as an image.</p>
+
+  <label for="text">Your text</label>
+  <textarea id="text" maxlength="1500" placeholder="Paste the concept or topic here"></textarea>
+
+  <label>Slide colour</label>
+  <div class="tones" id="themes">
+    <button type="button" class="chip active" data-theme="sunset">Sunset</button>
+    <button type="button" class="chip" data-theme="ocean">Ocean</button>
+    <button type="button" class="chip" data-theme="forest">Forest</button>
+    <button type="button" class="chip" data-theme="royal">Royal</button>
+    <button type="button" class="chip" data-theme="night">Night</button>
+  </div>
+
+  <label for="lang">Language</label>
+  <select id="lang">
+    <option value="english">English</option>
+    <option value="hindi">हिन्दी</option>
+  </select>
+
+  <button id="go" class="go">Generate slides</button>
+  <p id="msg" role="status"></p>
+
+  <div id="slides"></div>
+  <button id="dl" class="go" hidden>Download all slides (ZIP folder)</button>
+</main>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="{{ url_for('static', filename='screen.js') }}"></script>
+</body>
+</html>
