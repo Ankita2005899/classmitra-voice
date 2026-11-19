@@ -18,3 +18,5 @@ Open http://127.0.0.1:5000
 ## Deploy on Render
 Build: `pip install -r requirements.txt`  Start: `gunicorn app:app --timeout 120`
 Add env var `GEMINI_API_KEY`.
+
+Made by Ankita.
