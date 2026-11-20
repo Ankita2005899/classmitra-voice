@@ -53,7 +53,7 @@ function fitSize(txt, w, h, hindi, max = 3.2, min = 1.6, bold = false) {
   return min;
 }
 const T = (role, x, y, w, h, text, size) => ({ id: ++uid, type: "text", role, x, y, w, h, text, size, bold: role === "title" || role === "head", align: "left" });
-const P = (q, x, y, w, h, fit) => ({ id: ++uid, type: "img", x, y, w, h, q, src: null, fit: fit || "cover", state: q ? "load" : "empty" });
+const P = (q, p, x, y, w, h, fit) => ({ id: ++uid, type: "img", x, y, w, h, q, p: p || "", n: 0, src: null, fit: fit || "cover", state: q || p ? "load" : "empty" });
 
 function build(d) {
   const withImg = $("imgstyle").value !== "none", hindi = $("lang").value === "hindi", I = d.images || {};
@@ -64,11 +64,11 @@ function build(d) {
     T("title", 6, 18, withImg ? 56 : 88, 34, title, fitSize(title, withImg ? 56 : 88, 0.34 * H, hindi, 6.4, 3.4, true)),
     T("body", 6, 56, withImg ? 56 : 88, 26, line, fitSize(line, withImg ? 56 : 88, 0.26 * H, hindi)),
   ];
-  if (withImg) cover.push(P(I.cover || d.title, 64, 12, 30, 76));
+  if (withImg) cover.push(P((I.cover || {}).query || title, (I.cover || {}).prompt, 64, 12, 30, 76));
   deck.push({ els: cover });
   const content = (head, txt, q) => {
     const els = [T("head", 6, 8, w, 12, head, 4.6), T("body", 6, 26, w, 64, txt, fitSize(txt, w, 0.64 * H, hindi))];
-    if (withImg) els.push(P(q, 62, 16, 32, 68));
+    q = q || {}; if (withImg) els.push(P(q.query || `${title} ${head}`, q.prompt, 62, 16, 32, 68));
     deck.push({ els });
   };
   [["Key points", "key_points"], ["Advantages", "advantages"], ["Disadvantages", "disadvantages"], ["Applications", "applications"]]
@@ -154,7 +154,7 @@ $("file").onchange = () => {
   const rd = new FileReader();
   rd.onload = () => {
     if (fileFor) { fileFor.src = rd.result; fileFor.state = "ok"; }
-    else if (selS) { const e = P("", 34, 24, 30, 50, "contain"); e.src = rd.result; e.state = "ok"; selS.els.push(e); selE = e.id; }
+    else if (selS) { const e = P("", "", 34, 24, 30, 50, "contain"); e.src = rd.result; e.state = "ok"; selS.els.push(e); selE = e.id; }
     draw();
   };
   rd.readAsDataURL(f); $("file").value = "";
@@ -186,16 +186,41 @@ $("tc").oninput = () => { const e = curEl(); if (e) { e.color = $("tc").value; e
 $("bgc").oninput = () => { if (selS) { selS.bg = $("bgc").value; draw(); } };
 
 /* ---------- generate ---------- */
-async function getImgs() {
-  const st = $("imgstyle").value; if (st === "none") return;
-  for (const e of allEls().filter((x) => x.type === "img" && x.q)) {
-    try {
-      const d = await (await fetch(`/image?style=${st}&q=${encodeURIComponent(e.q)}`)).json();
-      if (d.url) { e.src = d.url; e.state = "ok"; } else e.state = "empty";
-    } catch (_) { e.state = "empty"; }
-    if (nodes[e.id]) fillImg(e, nodes[e.id]);
-  }
+async function fetchOne(e) {
+  e.state = "load"; if (nodes[e.id]) fillImg(e, nodes[e.id]);
+  let why = "";
+  try {
+    const d = await (await fetch(`/image?style=${$("imgstyle").value}&n=${e.n}&q=${encodeURIComponent(e.q || "")}&p=${encodeURIComponent(e.p || "")}`)).json();
+    if (d.url) { e.src = d.url; e.state = "ok"; } else { e.state = "empty"; why = d.why || ""; }
+  } catch (_) { e.state = "empty"; why = "server not reachable"; }
+  if (nodes[e.id]) fillImg(e, nodes[e.id]);
+  return why;
 }
+
+async function getImgs() {
+  if ($("imgstyle").value === "none") return;
+  const list = allEls().filter((x) => x.type === "img" && (x.q || x.p) && !x.src), msg = $("msg");
+  let failed = 0, why = "";
+  for (let i = 0; i < list.length; i++) {
+    msg.className = ""; msg.textContent = `Making image ${i + 1} of ${list.length}…`;
+    const w = await fetchOne(list[i]);
+    if (w) { failed++; why = w; }
+  }
+  msg.className = failed ? "err" : "";
+  msg.textContent = failed ? `${failed} image(s) failed (${why}). Add the free keys in .env, then click "Retry images".` : "";
+}
+$("retry").onclick = () => getImgs();
+$("newimg").onclick = async () => {
+  const e = curEl(); if (!e || e.type !== "img") return;
+  e.n++; e.src = null; $("msg").className = ""; $("msg").textContent = "Making a new image…";
+  const w = await fetchOne(e); $("msg").className = w ? "err" : ""; $("msg").textContent = w ? `Failed (${w})` : "";
+};
+$("descimg").onclick = async () => {
+  const e = curEl(); if (!e || e.type !== "img") return;
+  const t = prompt("Describe the image you want for this slide:", e.p || e.q || ""); if (!t) return;
+  e.p = t; e.q = t.split(/\s+/).slice(0, 4).join(" "); e.n++; e.src = null; $("msg").className = ""; $("msg").textContent = "Making your image…";
+  const w = await fetchOne(e); $("msg").className = w ? "err" : ""; $("msg").textContent = w ? `Failed (${w})` : "";
+};
 
 $("go").addEventListener("click", async () => {
   const text = $("text").value.trim(), msg = $("msg");
@@ -208,9 +233,8 @@ $("go").addEventListener("click", async () => {
     if (!res.ok) throw new Error(data.error || "Request failed");
     build(data); draw();
     $("bar").hidden = false; $("hint").hidden = false;
-    msg.textContent = $("imgstyle").value === "none" ? "" : "Slides ready. Adding images one by one…";
-    await getImgs();
     msg.textContent = "";
+    await getImgs();
   } catch (err) { msg.textContent = err.message; msg.className = "err"; }
   finally { $("go").disabled = false; }
 });

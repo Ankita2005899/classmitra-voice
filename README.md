@@ -23,3 +23,9 @@ Add env var `GEMINI_API_KEY`.
 Generate slides, then edit everything: drag to move, blue corner to resize, double-click text to edit,
 upload images/logos, change colours (8 frames or your own 6), delete anything, download PNGs as ZIP.
 Images: "Real photos" uses Pexels if PEXELS_API_KEY is set, otherwise AI-generated; 2D/3D/Cinematic are AI-generated.
+
+## Free keys for slide images (put in .env)
+- CF_ACCOUNT_ID + CF_API_TOKEN: Cloudflare Workers AI (FLUX image generation, free daily allowance) - best option.
+- PEXELS_API_KEY: real photos (pexels.com/api).
+Each slide gets its own scene prompt. Use "New image" or "Describe image" in the toolbar to fix any picture.
+- PIXABAY_API_KEY: real stock photos (pixabay.com/api/docs). Photos are from Pixabay.
