@@ -87,26 +87,23 @@ def generate():
         asyncio.run(make_audio(script, voice, os.path.join(AUDIO_DIR, name)))
         return jsonify(script=script, audio_url=f"/static/audio/{name}")
     except errors.APIError as e:
-        if e.code in (400, 401, 403):
-            return jsonify(error="Invalid or missing GEMINI_API_KEY."), 500
-        if e.code == 429:
-            return jsonify(error="Free limit reached. Wait a minute and try again."), 429
-        app.logger.exception(e)
-        return jsonify(error="Gemini error. Please try again."), 500
+        return api_error_response(e)
     except Exception as e:
         app.logger.exception(e)
         return jsonify(error="Something went wrong. Please try again."), 500
 
 
 def api_error_response(e):
-    if e.code in (400, 401, 403):
-        return jsonify(error="Invalid or missing GEMINI_API_KEY."), 500
+    msg = str(getattr(e, "message", "") or e)
+    key = os.getenv("GEMINI_API_KEY", "").strip()
+    if key:
+        msg = msg.replace(key, "***")
+    app.logger.warning("Gemini API error %s: %s", getattr(e, "code", "?"), msg)
     if e.code == 429:
         return jsonify(error="Free limit reached. Wait a minute and try again."), 429
     if e.code == 404:
         return jsonify(error="Model not available. Change GEMINI_MODEL in .env."), 500
-    app.logger.exception(e)
-    return jsonify(error="Gemini error. Please try again."), 500
+    return jsonify(error="Gemini says (%s): %s" % (e.code, msg[:220])), 500
 
 
 IMG_KEYS = ("cover", "key_points", "advantages", "disadvantages", "applications", "example")
@@ -116,7 +113,8 @@ def _img_item(v):
     if isinstance(v, str):
         v = {"query": v}
     v = v if isinstance(v, dict) else {}
-    return {"query": str(v.get("query") or "").strip()[:60], "prompt": str(v.get("prompt") or "").strip()[:300]}
+    return {"query": str(v.get("query") or "").strip()[:60], "prompt": str(v.get("prompt") or "").strip()[:300],
+            "emoji": str(v.get("emoji") or "").strip()[:8]}
 
 
 @app.route("/screen")
@@ -145,10 +143,13 @@ def analyze():
         '"applications" (list), "example" (string). '
         "Every list item: max 14 words, starting with one fitting emoji. "
         "Also add \"images\": an object with keys cover, key_points, advantages, disadvantages, applications, example. "
-        "Each value is an object {\"query\": ..., \"prompt\": ...}. "
-        "query = 2-4 English words naming ONE concrete thing a photographer could shoot for that slide. "
-        "prompt = ONE English sentence (max 30 words) describing a clear visual scene that illustrates THAT slide's own points: "
-        "name the concrete objects, setting and action. No text, letters or numbers in the picture. "
+        "Each value is an object {\"query\": ..., \"prompt\": ..., \"emoji\": ...}. "
+        "query = 2-4 English words for ONE concrete thing to photograph for that slide. "
+        "prompt = ONE English sentence (max 35 words) describing a clear, simple, colourful visual scene that shows THAT slide's main idea and its first two points: "
+        "name the concrete objects, setting and action. For abstract or technical topics show a friendly everyday scene (people, devices, screens, tools), never an abstract concept. "
+        "If a topic word has several meanings (Java, Python, Apple, Mercury...), always depict the technology or subject meaning, never the food, animal or fruit. "
+        "No text, letters, numbers or logos in the picture. "
+        "emoji = ONE emoji that best represents that slide. "
         "Max 5 items per list. If the text does not support a section, use an empty list or empty string. "
         "Do not invent facts that are not supported by the text or common knowledge."
     )
@@ -305,12 +306,20 @@ def image():
             except Exception as e:
                 why.append("pixabay: %s" % str(e).replace(pkey, "***"))
     scene = "%s, %s, no text, no letters, no watermark" % (p or q, STYLES[style])
+    cf_ready = True
     if not uri:
-        try:
-            uri = _cloudflare(scene, seed=1000 + n * 7)
-        except Exception as e:
-            why.append("cloudflare: %s" % e)
-    if not uri:
+        for attempt in range(2):
+            try:
+                uri = _cloudflare(scene, seed=1000 + n * 7 + attempt)
+                break
+            except RuntimeError as e:  # keys missing
+                why.append("cloudflare: %s" % e)
+                cf_ready = False
+                break
+            except Exception as e:
+                why.append("cloudflare: %s" % e)
+                time.sleep(2)
+    if not uri and not cf_ready:  # Pollinations adds a watermark and is slow, so it is only a fallback
         try:
             uri = _pollinations(scene)
         except Exception as e:

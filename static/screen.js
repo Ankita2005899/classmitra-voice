@@ -55,6 +55,9 @@ function fitSize(txt, w, h, hindi, max = 3.2, min = 1.6, bold = false) {
 const T = (role, x, y, w, h, text, size) => ({ id: ++uid, type: "text", role, x, y, w, h, text, size, bold: role === "title" || role === "head", align: "left" });
 const P = (q, p, x, y, w, h, fit) => ({ id: ++uid, type: "img", x, y, w, h, q, p: p || "", n: 0, src: null, fit: fit || "cover", state: q || p ? "load" : "empty" });
 
+const EMO = /\p{Extended_Pictographic}(\uFE0F|\u200d\p{Extended_Pictographic})*/u;
+const firstEmoji = (t) => (String(t).match(EMO) || ["📚"])[0];
+
 function build(d) {
   const withImg = $("imgstyle").value !== "none", hindi = $("lang").value === "hindi", I = d.images || {};
   const w = withImg ? 54 : 88, H = 56.25;
@@ -64,11 +67,11 @@ function build(d) {
     T("title", 6, 18, withImg ? 56 : 88, 34, title, fitSize(title, withImg ? 56 : 88, 0.34 * H, hindi, 6.4, 3.4, true)),
     T("body", 6, 56, withImg ? 56 : 88, 26, line, fitSize(line, withImg ? 56 : 88, 0.26 * H, hindi)),
   ];
-  if (withImg) cover.push(P((I.cover || {}).query || title, (I.cover || {}).prompt, 64, 12, 30, 76));
+  if (withImg) { const c = I.cover || {}, pc = P(c.query || title, c.prompt, 64, 12, 30, 76); pc.emoji = c.emoji || "🎓"; cover.push(pc); }
   deck.push({ els: cover });
   const content = (head, txt, q) => {
     const els = [T("head", 6, 8, w, 12, head, 4.6), T("body", 6, 26, w, 64, txt, fitSize(txt, w, 0.64 * H, hindi))];
-    q = q || {}; if (withImg) els.push(P(q.query || `${title} ${head}`, q.prompt, 62, 16, 32, 68));
+    q = q || {}; if (withImg) { const pi = P(q.query || `${title} ${head}`, q.prompt, 62, 16, 32, 68); pi.emoji = q.emoji || firstEmoji(txt); els.push(pi); }
     deck.push({ els });
   };
   [["Key points", "key_points"], ["Advantages", "advantages"], ["Disadvantages", "disadvantages"], ["Applications", "applications"]]
@@ -79,9 +82,12 @@ function build(d) {
 
 /* ---------- drawing ---------- */
 function fillImg(e, n) {
-  n.style.borderColor = pal[5]; n.style.color = pal[3];
-  if (e.src) { n.style.backgroundImage = `url("${e.src}")`; n.style.backgroundSize = e.fit; n.classList.remove("ph"); }
-  else { n.style.backgroundImage = "none"; n.classList.add("ph"); n.dataset.t = e.state === "load" ? "Finding image…" : "Click to add image"; }
+  const emo = !e.src && !!e.emoji && e.state !== "load";
+  n.style.color = pal[3]; n.style.borderColor = emo ? pal[4] : pal[5]; n.style.background = "";
+  n.classList.toggle("emo", emo); n.classList.toggle("ph", !e.src && !emo);
+  if (e.src) { n.style.backgroundImage = `url("${e.src}")`; n.style.backgroundSize = e.fit; }
+  else if (emo) { n.style.backgroundImage = `linear-gradient(135deg,${pal[5]},${pal[1]})`; n.style.backgroundSize = "cover"; n.dataset.t = e.emoji; }
+  else { n.style.backgroundImage = "none"; n.dataset.t = e.state === "load" ? "Finding image…" : "Click to add image"; }
 }
 
 function mkNode(e, r, s) {
@@ -98,7 +104,7 @@ function mkNode(e, r, s) {
     n.oninput = () => (e.text = n.innerText.replace(/\n$/, ""));
   } else {
     fillImg(e, n);
-    n.onclick = () => { if (!n._moved && !e.src && e.state !== "load") pick(e); };
+    n.onclick = () => { if (!n._moved && n.classList.contains("ph") && e.state !== "load") pick(e); };
   }
   const rz = el("div", "rz"); n.append(rz);
   n.addEventListener("pointerdown", (ev) => {
