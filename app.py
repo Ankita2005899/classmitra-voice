@@ -134,8 +134,8 @@ def analyze():
         '"key_points" (list), "advantages" (list), "disadvantages" (list), '
         '"applications" (list), "example" (string). '
         "Every list item: max 14 words, starting with one fitting emoji. "
-        "Also add \"image_query\" (2-3 English words describing a photo that fits the topic) and "
-        "\"example_image_query\" (2-3 English words for a photo that fits the example). "
+        "Also add \"images\": an object with keys cover, key_points, advantages, disadvantages, applications, example. "
+        "Each value = 2-4 English words naming ONE concrete visual subject that matches that slide's content (no text, no names). "
         "Max 5 items per list. If the text does not support a section, use an empty list or empty string. "
         "Do not invent facts that are not supported by the text or common knowledge."
     )
@@ -166,37 +166,65 @@ def analyze():
         key_points=lst("key_points"), advantages=lst("advantages"),
         disadvantages=lst("disadvantages"), applications=lst("applications"),
         example=str(d.get("example") or "").strip(),
-        image_query=str(d.get("image_query") or "").strip()[:60],
-        example_image_query=str(d.get("example_image_query") or "").strip()[:60],
+        images={k: str((d.get("images") or {}).get(k) or "").strip()[:60]
+                for k in ("cover", "key_points", "advantages", "disadvantages", "applications", "example")},
     )
 
 
 _img_cache = {}
+STYLES = {
+    "photo": "realistic professional photo, natural light",
+    "2d": "flat 2D vector illustration, clean shapes, soft professional colors, plain background",
+    "3d": "3D render, smooth clay style, soft studio lighting, plain background",
+    "cinematic": "cinematic 4K render, dramatic lighting, depth of field",
+}
+
+
+def _get(url, headers=None, timeout=20):
+    req = urllib.request.Request(url, headers=dict({"User-Agent": "ClassMitra"}, **(headers or {})))
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read(), r.headers.get("Content-Type", "image/jpeg").split(";")[0]
+
+
+def _data_uri(raw, ctype):
+    if not ctype.startswith("image/") or len(raw) < 1000:
+        raise ValueError("not an image")
+    return "data:%s;base64,%s" % (ctype, base64.b64encode(raw).decode())
 
 
 @app.route("/image")
 def image():
-    """Optional photo from Pexels (free key). Returns {url: data-URI} or {url: null}."""
+    """Slide picture: real photo (Pexels, optional key) or AI-generated (Pollinations, no key)."""
     q = (request.args.get("q") or "").strip()[:60]
+    style = request.args.get("style", "photo")
+    if style not in STYLES:
+        style = "photo"
+    if not q:
+        return jsonify(url=None)
+    ck = (q, style)
+    if ck in _img_cache:
+        return jsonify(url=_img_cache[ck])
+    uri = None
     key = os.getenv("PEXELS_API_KEY", "").strip()
-    if not q or not key or key.startswith("paste_"):
-        return jsonify(url=None)
-    if q in _img_cache:
-        return jsonify(url=_img_cache[q])
-    try:
-        api = "https://api.pexels.com/v1/search?per_page=1&orientation=landscape&query=" + urllib.parse.quote(q)
-        req = urllib.request.Request(api, headers={"Authorization": key, "User-Agent": "ClassMitra"})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            photos = json.load(r).get("photos") or []
-        if not photos:
-            return jsonify(url=None)
-        with urllib.request.urlopen(photos[0]["src"]["large"], timeout=10) as r:
-            uri = "data:image/jpeg;base64," + base64.b64encode(r.read()).decode()
-        _img_cache[q] = uri
-        return jsonify(url=uri)
-    except Exception as e:
-        app.logger.warning("image fetch failed: %s", e)
-        return jsonify(url=None)
+    if style == "photo" and key and not key.startswith("paste_"):
+        try:
+            raw, _ = _get("https://api.pexels.com/v1/search?per_page=1&orientation=landscape&query="
+                          + urllib.parse.quote(q), {"Authorization": key}, 8)
+            photos = json.loads(raw).get("photos") or []
+            if photos:
+                uri = _data_uri(*_get(photos[0]["src"]["large"], timeout=10))
+        except Exception as e:
+            app.logger.warning("pexels failed: %s", e)
+    if not uri:
+        try:
+            prompt = "%s, %s, no text, no watermark" % (q, STYLES[style])
+            uri = _data_uri(*_get("https://image.pollinations.ai/prompt/" + urllib.parse.quote(prompt)
+                                  + "?width=800&height=800&nologo=true", timeout=40))
+        except Exception as e:
+            app.logger.warning("generated image failed: %s", e)
+    if uri:
+        _img_cache[ck] = uri
+    return jsonify(url=uri)
 
 
 if __name__ == "__main__":
