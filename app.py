@@ -138,6 +138,7 @@ def analyze():
         "Analyse the user's text for a student slide deck. Write in " + LANGS[lang] + ". "
         "Return ONLY JSON with these keys: "
         '"title" (string, max 8 words), '
+        '"context" (string, 2-5 English words naming the subject field, e.g. \"Java programming language\"), '
         '"important_line" (string, one-sentence definition or core idea of the concept), '
         '"key_points" (list), "advantages" (list), "disadvantages" (list), '
         '"applications" (list), "example" (string). '
@@ -147,7 +148,9 @@ def analyze():
         "query = 2-4 English words for ONE concrete thing to photograph for that slide. "
         "prompt = ONE English sentence (max 35 words) describing a clear, simple, colourful visual scene that shows THAT slide's main idea and its first two points: "
         "name the concrete objects, setting and action. For abstract or technical topics show a friendly everyday scene (people, devices, screens, tools), never an abstract concept. "
-        "If a topic word has several meanings (Java, Python, Apple, Mercury...), always depict the technology or subject meaning, never the food, animal or fruit. "
+        "Every query and prompt must LITERALLY show the subject of that slide in its own field. NEVER use metaphors, symbols or puns "
+        "(no hourglass for 'slow', no coffee for 'Java'): for technology show developers, laptops, code editors, servers, network cables; "
+        "for science show the real equipment, organ or process; for business show offices, shops, documents. "
         "No text, letters, numbers or logos in the picture. "
         "emoji = ONE emoji that best represents that slide. "
         "Max 5 items per list. If the text does not support a section, use an empty list or empty string. "
@@ -176,6 +179,7 @@ def analyze():
 
     return jsonify(
         title=str(d.get("title") or "").strip(),
+        context=str(d.get("context") or "").strip()[:60],
         important_line=str(d.get("important_line") or "").strip(),
         key_points=lst("key_points"), advantages=lst("advantages"),
         disadvantages=lst("disadvantages"), applications=lst("applications"),
@@ -215,6 +219,7 @@ def _pollinations(prompt):
     pkey = os.getenv("POLLINATIONS_API_KEY", "").strip()
     if pkey and not pkey.startswith("paste_"):
         return _data_uri(*_get("https://gen.pollinations.ai/image/%s?width=800&height=800&key=%s" % (qs, pkey), timeout=60))
+    raise RuntimeError("skipped (anonymous service adds a watermark); use Cloudflare")
     url = "https://image.pollinations.ai/prompt/%s?width=800&height=800&nologo=true" % qs
     with _poll_lock:
         for _ in range(3):
@@ -246,17 +251,30 @@ def _commons(q):
     return None
 
 
-def _cloudflare(prompt, seed=0):
-    """Free FLUX image generation (Cloudflare Workers AI, 10,000 free neurons/day)."""
+class NoKeys(Exception):
+    pass
+
+
+VARIANTS = ["", ", different camera angle", ", close-up view", ", wide view", ", different composition"]
+
+
+def _cloudflare(prompt):
+    """Free FLUX image generation (Cloudflare Workers AI). Sends only the documented inputs."""
     acct, tok = os.getenv("CF_ACCOUNT_ID", "").strip(), os.getenv("CF_API_TOKEN", "").strip()
     if not acct or not tok or acct.startswith("paste_") or tok.startswith("paste_"):
-        raise RuntimeError("no CF_ACCOUNT_ID / CF_API_TOKEN in .env")
+        raise NoKeys("no CF_ACCOUNT_ID / CF_API_TOKEN in .env")
     req = urllib.request.Request(
         "https://api.cloudflare.com/client/v4/accounts/%s/ai/run/@cf/black-forest-labs/flux-1-schnell" % acct,
-        data=json.dumps({"prompt": prompt[:1500], "steps": 6, "seed": seed}).encode(),
+        data=json.dumps({"prompt": prompt[:1500], "num_steps": 4}).encode(),
         headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        b64 = json.loads(r.read())["result"]["image"]
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError("HTTP %s %s" % (e.code, e.read().decode("utf-8", "ignore")[:200]))
+    b64 = (data.get("result") or {}).get("image")
+    if not b64:
+        raise RuntimeError("no image in reply: %s" % str(data)[:200])
     return "data:image/jpeg;base64," + b64
 
 
@@ -310,9 +328,9 @@ def image():
     if not uri:
         for attempt in range(2):
             try:
-                uri = _cloudflare(scene, seed=1000 + n * 7 + attempt)
+                uri = _cloudflare(scene + VARIANTS[(n + attempt) % len(VARIANTS)])
                 break
-            except RuntimeError as e:  # keys missing
+            except NoKeys as e:  # keys missing
                 why.append("cloudflare: %s" % e)
                 cf_ready = False
                 break
@@ -324,11 +342,6 @@ def image():
             uri = _pollinations(scene)
         except Exception as e:
             why.append("pollinations: %s" % e)
-    if not uri and style == "photo":
-        try:
-            uri = _commons(q or p)
-        except Exception as e:
-            why.append("commons: %s" % e)
     if uri:
         _img_cache[ck] = uri
     else:

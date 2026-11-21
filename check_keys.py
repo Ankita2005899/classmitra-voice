@@ -34,3 +34,10 @@ except urllib.error.HTTPError as e:
     show("Cloudflare image", False, "HTTP %s %s" % (e.code, e.read().decode()[:300]))
 except Exception as e:
     show("Cloudflare image", False, str(e)[:300])
+
+try:
+    import app
+    r = app.app.test_client().get("/image?style=3d&q=Java%20code&p=Java%20programming%20language%3A%20a%20developer%20writing%20code%20on%20a%20laptop").json
+    show("App image route", bool(r.get("url")), r.get("why", ""))
+except Exception as e:
+    show("App image route", False, str(e)[:300])

@@ -61,6 +61,11 @@ const firstEmoji = (t) => (String(t).match(EMO) || ["📚"])[0];
 function build(d) {
   const withImg = $("imgstyle").value !== "none", hindi = $("lang").value === "hindi", I = d.images || {};
   const w = withImg ? 54 : 88, H = 56.25;
+  const ctx = d.context || d.title || "";
+  Object.keys(I).forEach((k) => {
+    const o = I[k] || {};
+    I[k] = { query: `${ctx} ${o.query || ""}`.trim(), prompt: o.prompt ? `${ctx}: ${o.prompt}` : "" };
+  });
   deck = [];
   const title = d.title || "Your topic", line = d.important_line || "";
   const cover = [
@@ -82,7 +87,7 @@ function build(d) {
 
 /* ---------- drawing ---------- */
 function fillImg(e, n) {
-  const emo = !e.src && !!e.emoji && e.state !== "load";
+  const emo = false;
   n.style.color = pal[3]; n.style.borderColor = emo ? pal[4] : pal[5]; n.style.background = "";
   n.classList.toggle("emo", emo); n.classList.toggle("ph", !e.src && !emo);
   if (e.src) { n.style.backgroundImage = `url("${e.src}")`; n.style.backgroundSize = e.fit; }
@@ -247,6 +252,8 @@ $("go").addEventListener("click", async () => {
 
 /* ---------- download ---------- */
 $("dl").addEventListener("click", async () => {
+  const empty = document.querySelectorAll("#slides .el.ph").length;
+  if (empty && !confirm(`${empty} image box(es) are still empty and will be left blank. Download anyway?`)) return;
   const btn = $("dl"), old = btn.textContent; btn.disabled = true; btn.textContent = "Preparing…";
   try {
     const zip = new JSZip(), folder = zip.folder("classmitra-slides"), roots = [...document.querySelectorAll("#slides .slide")];
