@@ -191,8 +191,8 @@ def analyze():
 _img_cache = {}
 STYLES = {
     "photo": "realistic professional photo, natural light",
-    "2d": "flat 2D vector illustration, clean shapes, soft professional colors, plain background",
-    "3d": "3D render, smooth clay style, soft studio lighting, plain background",
+    "2d": "flat 2D vector illustration, clean shapes, soft professional colors",
+    "3d": "3D render, smooth clay style, soft studio lighting",
     "cinematic": "cinematic 4K render, dramatic lighting, depth of field",
 }
 
@@ -282,7 +282,7 @@ def _cloudflare(prompt):
 def image():
     """Slide picture. Photo: Pexels -> Pixabay -> generated. Other styles: generated. Generated = Cloudflare -> Pollinations."""
     q = (request.args.get("q") or "").strip()[:80]
-    p = (request.args.get("p") or "").strip()[:300]
+    p = (request.args.get("p") or "").strip()[:600]
     style = request.args.get("style", "photo")
     n = max(0, min(int(request.args.get("n", "0") or 0), 20))
     if style not in STYLES:

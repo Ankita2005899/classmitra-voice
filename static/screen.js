@@ -43,7 +43,7 @@ $("lang").value = sessionStorage.getItem("cm_lang") || "english";
 
 /* ---------- build deck from AI result ---------- */
 function fitSize(txt, w, h, hindi, max = 3.2, min = 1.6, bold = false) {
-  const cw = (hindi ? 0.58 : 0.5) + (bold ? 0.06 : 0);
+  const cw = (hindi ? 0.58 : 0.5) + (bold ? 0.14 : 0);
   for (let s = max; s >= min; s -= 0.1) {
     const cpl = Math.max(4, w / (s * cw));
     let lines = 0;
@@ -56,6 +56,7 @@ const T = (role, x, y, w, h, text, size) => ({ id: ++uid, type: "text", role, x,
 const P = (q, p, x, y, w, h, fit) => ({ id: ++uid, type: "img", x, y, w, h, q, p: p || "", n: 0, src: null, fit: fit || "cover", state: q || p ? "load" : "empty" });
 
 const EMO = /\p{Extended_Pictographic}(\uFE0F|\u200d\p{Extended_Pictographic})*/u;
+const strip = (t) => String(t).replace(/\p{Extended_Pictographic}\uFE0F?/gu, "").replace(/\s+/g, " ").trim();
 const firstEmoji = (t) => (String(t).match(EMO) || ["📚"])[0];
 
 function build(d) {
@@ -72,11 +73,12 @@ function build(d) {
     T("title", 6, 18, withImg ? 56 : 88, 34, title, fitSize(title, withImg ? 56 : 88, 0.34 * H, hindi, 6.4, 3.4, true)),
     T("body", 6, 56, withImg ? 56 : 88, 26, line, fitSize(line, withImg ? 56 : 88, 0.26 * H, hindi)),
   ];
-  if (withImg) { const c = I.cover || {}, pc = P(c.query || title, c.prompt, 64, 12, 30, 76); pc.emoji = c.emoji || "🎓"; cover.push(pc); }
+  if (withImg) { const c = I.cover || {}, pc = P(c.query || title, `${c.prompt || ctx} | ${title}: ${strip(line).slice(0, 120)}`.slice(0, 600), 64, 12, 30, 76); pc.emoji = c.emoji || "🎓"; cover.push(pc); }
   deck.push({ els: cover });
   const content = (head, txt, q) => {
     const els = [T("head", 6, 8, w, 12, head, 4.6), T("body", 6, 26, w, 64, txt, fitSize(txt, w, 0.64 * H, hindi))];
-    q = q || {}; if (withImg) { const pi = P(q.query || `${title} ${head}`, q.prompt, 62, 16, 32, 68); pi.emoji = q.emoji || firstEmoji(txt); els.push(pi); }
+    q = q || {}; if (withImg) { const pr = `${q.prompt || ctx} | ${head}: ${txt.split("\n").slice(0, 2).map((x) => strip(x).slice(0, 80)).join("; ")}`.slice(0, 600);
+      const pi = P(q.query || `${title} ${head}`, pr, 62, 16, 32, 68); pi.emoji = q.emoji || firstEmoji(txt); els.push(pi); }
     deck.push({ els });
   };
   [["Key points", "key_points"], ["Advantages", "advantages"], ["Disadvantages", "disadvantages"], ["Applications", "applications"]]
