@@ -259,13 +259,13 @@ VARIANTS = ["", ", different camera angle", ", close-up view", ", wide view", ",
 
 
 def _cloudflare(prompt):
-    """Free FLUX image generation (Cloudflare Workers AI). Sends only the documented inputs."""
+    """Free FLUX image generation (Cloudflare Workers AI). Sends only prompt + steps (the inputs the live API accepts)."""
     acct, tok = os.getenv("CF_ACCOUNT_ID", "").strip(), os.getenv("CF_API_TOKEN", "").strip()
     if not acct or not tok or acct.startswith("paste_") or tok.startswith("paste_"):
         raise NoKeys("no CF_ACCOUNT_ID / CF_API_TOKEN in .env")
     req = urllib.request.Request(
         "https://api.cloudflare.com/client/v4/accounts/%s/ai/run/@cf/black-forest-labs/flux-1-schnell" % acct,
-        data=json.dumps({"prompt": prompt[:1500], "num_steps": 4}).encode(),
+        data=json.dumps({"prompt": prompt[:1500], "steps": 4}).encode(),
         headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
