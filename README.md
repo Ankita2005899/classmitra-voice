@@ -29,3 +29,6 @@ Images: "Real photos" uses Pexels if PEXELS_API_KEY is set, otherwise AI-generat
 - PEXELS_API_KEY: real photos (pexels.com/api).
 Each slide gets its own scene prompt. Use "New image" or "Describe image" in the toolbar to fix any picture.
 - PIXABAY_API_KEY: real stock photos (pixabay.com/api/docs). Photos are from Pixabay.
+
+## Talking Image (/talk)
+Upload a picture, click the two mouth corners, add text: the face moves its mouth and head with the voice. Free, runs in the browser. Download as WebM.

@@ -80,7 +80,7 @@ def generate():
         return jsonify(error="Invalid tone or language."), 400
 
     try:
-        script = make_script(text, tone, lang)
+        script = text if data.get("raw") else make_script(text, tone, lang)
         voice = TONES[tone][1] if lang == "english" else TONES[tone][2]
         cleanup_old_audio()
         name = f"{uuid.uuid4().hex}.mp3"
@@ -115,6 +115,11 @@ def _img_item(v):
     v = v if isinstance(v, dict) else {}
     return {"query": str(v.get("query") or "").strip()[:60], "prompt": str(v.get("prompt") or "").strip()[:300],
             "emoji": str(v.get("emoji") or "").strip()[:8]}
+
+
+@app.route("/talk")
+def talk():
+    return render_template("talk.html", tones=list(TONES.keys()))
 
 
 @app.route("/screen")

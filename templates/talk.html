@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClassMitra Talking Image</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='talk.css') }}">
+</head>
+<body>
+<main>
+  <a class="back" href="/screen">&larr; Back to slides</a>
+  <h1>Talking Image</h1>
+  <p class="sub">Upload a picture, add your text, and the face talks and moves along with the voice.</p>
+
+  <label for="file">1. Upload a picture (front-facing, mouth closed works best)</label>
+  <input type="file" id="file" accept="image/*">
+
+  <div id="stage" hidden>
+    <canvas id="cv"></canvas>
+    <p class="hint" id="hintm">2. Click the LEFT corner of the mouth, then the RIGHT corner. <button id="remark" type="button">Redo</button></p>
+  </div>
+
+  <label for="text">3. Your text</label>
+  <textarea id="text" maxlength="1500" placeholder="Paste your lines here"></textarea>
+
+  <div class="row">
+    <div><label for="tone">Speaking style</label>
+      <select id="tone">{% for t in tones %}<option value="{{ t }}">{{ t|capitalize }}</option>{% endfor %}</select></div>
+    <div><label for="lang">Language</label>
+      <select id="lang"><option value="english">English</option><option value="hindi">हिन्दी</option></select></div>
+  </div>
+  <label class="chk"><input type="checkbox" id="raw"> Read my text exactly (no rewriting)</label>
+
+  <div class="row">
+    <div><label for="strength">Mouth opening</label><input type="range" id="strength" min="0.5" max="2" step="0.1" value="1"></div>
+    <div><label for="move">Head movement</label><input type="range" id="move" min="0" max="2" step="0.1" value="1"></div>
+  </div>
+
+  <button id="go" class="go">Make it talk</button>
+  <p id="msg" role="status"></p>
+  <audio id="au" controls hidden></audio>
+  <p id="script"></p>
+  <div class="acts"><button id="replay" type="button" hidden>Replay</button><a id="dl" hidden download="talking-image.webm">Download video (WebM)</a></div>
+</main>
+<script src="{{ url_for('static', filename='talk.js') }}"></script>
+</body>
+</html>

@@ -276,3 +276,8 @@ $("dl").addEventListener("click", async () => {
   } catch (e) { $("msg").textContent = "Download failed. Check your internet and try again."; $("msg").className = "err"; }
   finally { btn.disabled = false; btn.textContent = old; }
 });
+
+$("nextTalk").addEventListener("click", () => {
+  sessionStorage.setItem("cm_text", $("text").value.trim());
+  sessionStorage.setItem("cm_lang", $("lang").value);
+});
