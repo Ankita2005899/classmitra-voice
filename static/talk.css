@@ -12,3 +12,6 @@ input[type=file]{color:var(--muted)}
 .acts [hidden]{display:none}
 .back{color:var(--orange);text-decoration:none;font-weight:600}
 @media(max-width:560px){.row{grid-template-columns:1fr}}
+.modes{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:6px}
+.opt{display:flex;align-items:center;gap:8px;font-weight:400;margin:0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px 14px;cursor:pointer}
+.chk[hidden],#photoBox[hidden]{display:none}

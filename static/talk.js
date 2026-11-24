@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d"), off = document.createElement("canvas"), octx = off.getContext("2d");
 let img = null, base = { w: 0, h: 0 }, view = { x: 0, y: 0, w: 0, h: 0, sc: 1 }, marks = [], mouth = null;
-let ac, an, buf, fbuf, dest, rec, chunks = [], sm = 0, hi = 0.5, peak = 0.05, playing = false;
+let ac, an, buf, fbuf, dest, rec, chunks = [], sm = 0, gs = 0, hi = 0.5, peak = 0.05, playing = false, mode = "char";
 
 $("text").value = sessionStorage.getItem("cm_text") || "";
 $("lang").value = sessionStorage.getItem("cm_lang") || "english";
@@ -56,6 +56,92 @@ function draw(open = 0, amp = 0, t = 0, showMarks = true) {
   }
 }
 
+
+/* ---------- built-in line character ---------- */
+const LINE = "#f5ede6", ORANGE = "#ff7a1a", lim = (v, a, b) => Math.max(a, Math.min(b, v));
+function limb(side, sx, sy, s, bend, ul, fl) {          // two lines: shoulder->elbow, elbow->wrist (+ hand)
+  const a1 = (s * Math.PI) / 180, a2 = ((s + bend) * Math.PI) / 180;
+  const ex = sx + Math.sin(a1) * side * ul, ey = sy + Math.cos(a1) * ul;
+  const wx = ex + Math.sin(a2) * side * fl, wy = ey + Math.cos(a2) * fl;
+  ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.lineTo(wx, wy); ctx.stroke();
+  ctx.beginPath(); ctx.arc(ex, ey, 4, 0, Math.PI * 2); ctx.fillStyle = LINE; ctx.fill();
+  ctx.beginPath(); ctx.arc(wx + Math.sin(a2) * side * 10, wy + Math.cos(a2) * 10, 10, 0, Math.PI * 2);
+  ctx.fillStyle = ORANGE; ctx.fill(); ctx.stroke();
+}
+function drawChar(open, amp, t) {
+  const g = lim(gs * 2.2, 0, 1), mv = +$("move").value, tone = $("tone").value, st = +$("strength").value / 1.5;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const bg = ctx.createLinearGradient(0, 0, 0, CH); bg.addColorStop(0, "#1b2a49"); bg.addColorStop(1, "#0d1730");
+  ctx.fillStyle = bg; ctx.fillRect(0, 0, CW, CH);
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.strokeStyle = "rgba(245,237,230,.22)"; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(110, 672); ctx.lineTo(530, 672); ctx.stroke();
+  const sway = Math.sin(t * 0.8) * 4 * (0.3 + g) * mv, br = Math.sin(t * 1.6) * 2;
+  ctx.save(); ctx.translate(sway, 0);
+  ctx.strokeStyle = LINE; ctx.lineWidth = 7;
+  for (const side of [-1, 1]) {                           // legs: hip->knee, knee->ankle, foot
+    const hx = 320 + side * 22, kx = hx + side * 10, ky = 580, ax = kx + side * 4, ay = 670;
+    ctx.beginPath(); ctx.moveTo(hx, 470); ctx.lineTo(kx, ky); ctx.lineTo(ax, ay); ctx.lineTo(ax + side * 30, ay); ctx.stroke();
+  }
+  ctx.beginPath(); ctx.moveTo(298, 470); ctx.lineTo(342, 470); ctx.stroke();        // hips
+  ctx.beginPath(); ctx.moveTo(320, 272); ctx.lineTo(320, 470); ctx.stroke();        // spine
+  ctx.beginPath(); ctx.moveTo(262, 290 + br); ctx.lineTo(378, 290 + br); ctx.stroke(); // shoulders
+  const rb = lim(12 + 80 * g * (0.6 + 0.4 * Math.sin(t * 3.1 + 1)) * mv + 35 * amp * mv, 0, 165 - (18 + 30 * g));
+  limb(1, 378, 290 + br, 18 + (30 * g + 10 * Math.sin(t * 2.7) * g) * mv, rb, 88, 82);       // right arm (main gestures)
+  const lb = 8 + 50 * g * (0.5 + 0.5 * Math.sin(t * 1.7 + 2.5)) * mv;
+  limb(-1, 262, 290 + br, 14 + (16 * g + 6 * Math.sin(t * 2.1 + 2) * g) * mv, lb, 88, 82);     // left arm
+  ctx.save();                                              // head: tilts and nods with the voice
+  ctx.translate(320, 262); ctx.rotate((Math.sin(t * 1.1) * 0.05 * (0.4 + g) + (amp - 0.3) * 0.03) * mv); ctx.translate(-320, -262 + amp * 3 * mv);
+  ctx.strokeStyle = LINE; ctx.lineWidth = 7;
+  ctx.beginPath(); ctx.moveTo(320, 252); ctx.lineTo(320, 272); ctx.stroke();        // neck
+  ctx.beginPath(); ctx.arc(320, 190, 62, 0, Math.PI * 2); ctx.stroke();            // face circle
+  const blink = t % 4.1 < 0.13;
+  ctx.fillStyle = LINE; ctx.lineWidth = 5;
+  for (const ex of [298, 342]) {
+    if (blink) { ctx.beginPath(); ctx.moveTo(ex - 7, 182); ctx.lineTo(ex + 7, 182); ctx.stroke(); }
+    else { ctx.beginPath(); ctx.arc(ex, 182, 5.5, 0, Math.PI * 2); ctx.fill(); }
+    ctx.beginPath(); ctx.moveTo(ex - 10, 166 - amp * 5); ctx.lineTo(ex + 10, 164 - amp * 5); ctx.stroke(); // brows lift on emphasis
+  }
+  ctx.beginPath(); ctx.moveTo(320, 190); ctx.lineTo(316, 205); ctx.lineTo(324, 206); ctx.lineWidth = 4; ctx.stroke(); // nose
+  // mouth
+  ctx.lineWidth = 5;
+  const rx = 14 + 12 * hi, ry = 3 + 25 * open * st;
+  if (open < 0.07) { ctx.beginPath(); ctx.moveTo(302, 224); ctx.quadraticCurveTo(320, 236, 338, 224); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.ellipse(320, 226 + Math.min(ry, 28) * 0.3, rx, Math.min(ry, 30), 0, 0, Math.PI * 2); ctx.fillStyle = "#7a1f2b"; ctx.fill(); ctx.stroke(); }
+  // look by speaking style
+  ctx.lineWidth = 4;
+  if (tone === "teacher") {
+    ctx.strokeStyle = ORANGE;
+    for (const ex of [298, 342]) { ctx.beginPath(); ctx.arc(ex, 182, 17, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(315, 180); ctx.lineTo(325, 180); ctx.moveTo(281, 180); ctx.lineTo(262, 176); ctx.moveTo(359, 180); ctx.lineTo(378, 176); ctx.stroke();
+  } else if (tone === "farmer") {
+    ctx.strokeStyle = "#e0b050"; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.ellipse(320, 140, 96, 16, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(262, 138); ctx.quadraticCurveTo(320, 52, 378, 138); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(266, 124); ctx.lineTo(374, 124); ctx.stroke();
+  } else if (tone === "cricketer") {
+    ctx.strokeStyle = "#4aa3ff"; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(258, 150); ctx.bezierCurveTo(258, 80, 382, 80, 382, 150); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(320, 152, 72, 10, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.restore(); ctx.restore();
+}
+function blank() {
+  ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#1e1916"; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.fillStyle = "#a89c92"; ctx.font = "20px sans-serif"; ctx.textAlign = "center"; ctx.fillText("Upload a picture above", cv.width / 2, cv.height / 2);
+}
+const CW = 640, CH = 720;
+function paint(open, amp, t, marksOn) { if (mode === "char") drawChar(open, amp, t); else if (img) draw(open, amp, t, marksOn); else blank(); }
+function setMode(m) {
+  mode = m; $("photoBox").hidden = m !== "photo"; $("zoomRow").hidden = m !== "photo";
+  if (m === "char") { cv.width = CW; cv.height = CH; }
+  else if (img) { faceView(); }
+  else { cv.width = CW; cv.height = 480; }
+  paint(0, 0, 0, !mouth);
+}
+document.querySelectorAll('input[name="mode"]').forEach((r) => (r.onchange = () => !playing && r.checked && setMode(r.value)));
+function idle() { if (!playing) { gs *= 0.95; if (mode === "char") drawChar(0, 0, performance.now() / 1000); } requestAnimationFrame(idle); }
+
 /* ---------- upload + mark the mouth ---------- */
 $("file").onchange = () => {
   const f = $("file").files[0]; if (!f) return;
@@ -64,14 +150,14 @@ $("file").onchange = () => {
     img = im;
     const s = Math.min(1, 1600 / im.width, 1600 / im.height);
     base = { w: im.width * s, h: im.height * s };
-    marks = []; mouth = null; fullView(); $("stage").hidden = false;
+    marks = []; mouth = null; fullView(); $("hintm").hidden = false;
     $("hintm").firstChild.textContent = HINT1;
     draw();
   };
   im.src = URL.createObjectURL(f);
 };
 cv.addEventListener("click", (e) => {
-  if (!img || playing || marks.length >= 2) return;
+  if (mode !== "photo" || !img || playing || marks.length >= 2) return;
   const r = cv.getBoundingClientRect();
   marks.push({ x: ((e.clientX - r.left) / r.width) * base.w, y: ((e.clientY - r.top) / r.height) * base.h });
   if (marks.length === 2) {
@@ -83,7 +169,7 @@ cv.addEventListener("click", (e) => {
   draw();
 });
 $("remark").onclick = () => { if (playing) return; marks = []; mouth = null; fullView(); $("hintm").firstChild.textContent = HINT1; draw(); };
-$("zoom").onchange = () => { if (playing) return; faceView(); draw(0, 0, 0, !mouth); };
+$("zoom").onchange = () => { if (playing || mode !== "photo") return; faceView(); draw(0, 0, 0, !mouth); };
 
 /* ---------- audio -> animation ---------- */
 function setupAudio() {
@@ -106,8 +192,8 @@ function loop() {
   const { rms, h } = analyse();
   peak = Math.max(peak * 0.996, rms, 0.04);                      // adapts to how loud the voice is
   const a = Math.min(1, Math.max(0, (rms / peak - 0.1) * 1.5));
-  sm = sm * 0.5 + a * 0.5; hi = hi * 0.8 + h * 0.2;
-  draw(sm, sm, performance.now() / 1000, false);
+  sm = sm * 0.5 + a * 0.5; hi = hi * 0.8 + h * 0.2; gs = gs * 0.94 + sm * 0.06;
+  paint(sm, sm, performance.now() / 1000, false);
   requestAnimationFrame(loop);
 }
 
@@ -131,7 +217,7 @@ async function play() {
   await au.play(); loop();
 }
 $("au").addEventListener("ended", () => {
-  playing = false; draw(0, 0, 0, false);
+  playing = false; paint(0, 0, 0, false);
   if (rec && rec.state !== "inactive") rec.stop();
 });
 $("replay").onclick = () => play();
@@ -139,8 +225,8 @@ $("replay").onclick = () => play();
 $("go").addEventListener("click", async () => {
   const msg = $("msg"), text = $("text").value.trim();
   msg.className = "";
-  if (!img) { msg.textContent = "Please upload a picture first."; msg.className = "err"; return; }
-  if (!mouth) { msg.textContent = "Please click the two corners of the mouth on the picture."; msg.className = "err"; return; }
+  if (mode === "photo" && !img) { msg.textContent = "Please upload a picture first."; msg.className = "err"; return; }
+  if (mode === "photo" && !mouth) { msg.textContent = "Please click the two corners of the mouth on the picture."; msg.className = "err"; return; }
   if (!text) { msg.textContent = "Please enter some text."; msg.className = "err"; return; }
   $("go").disabled = true; msg.textContent = "Making the voice… this takes a few seconds.";
   try {
@@ -156,3 +242,4 @@ $("go").addEventListener("click", async () => {
   } catch (err) { msg.textContent = err.message; msg.className = "err"; }
   finally { $("go").disabled = false; }
 });
+setMode("char"); idle();
