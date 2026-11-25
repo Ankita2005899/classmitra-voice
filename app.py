@@ -60,9 +60,15 @@ async def make_audio(script, voice, path):
     await edge_tts.Communicate(script, voice).save(path)
 
 
-def make_audio_retry(script, voice, path):
+def gtts_fallback(script, lang, path):
+    """Backup voice (Google Translate TTS, no key) when the Microsoft voice service refuses us."""
+    from gtts import gTTS
+    gTTS(script, lang="hi" if lang == "hindi" else "en", tld="co.in").save(path)
+
+
+def make_audio_retry(script, voice, path, lang="english"):
     last = None
-    for _ in range(3):
+    for _ in range(2):
         try:
             asyncio.run(make_audio(script, voice, path))
             if os.path.exists(path) and os.path.getsize(path) > 500:
@@ -70,7 +76,14 @@ def make_audio_retry(script, voice, path):
             last = RuntimeError("the voice service returned an empty file")
         except Exception as e:
             last = e
-        time.sleep(1.2)
+        time.sleep(1)
+    app.logger.warning("edge-tts failed (%s); using the backup voice", last)
+    try:
+        gtts_fallback(script, lang, path)
+        if os.path.exists(path) and os.path.getsize(path) > 500:
+            return
+    except Exception as e:
+        raise RuntimeError("Microsoft voice: %s | backup voice: %s" % (str(last)[:90], str(e)[:90]))
     raise last
 
 
@@ -101,7 +114,7 @@ def generate():
         voice = TONES[tone][1] if lang == "english" else TONES[tone][2]
         cleanup_old_audio()
         name = f"{uuid.uuid4().hex}.mp3"
-        make_audio_retry(script, voice, os.path.join(AUDIO_DIR, name))
+        make_audio_retry(script, voice, os.path.join(AUDIO_DIR, name), lang)
         return jsonify(script=script, audio_url=f"/static/audio/{name}")
     except errors.APIError as e:
         return api_error_response(e)
