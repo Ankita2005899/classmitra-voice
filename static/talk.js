@@ -3,7 +3,7 @@ const cv = $("cv"), ctx = cv.getContext("2d"), fcv = $("fcv"), fctx = fcv.getCon
 const off = document.createElement("canvas"), octx = off.getContext("2d"), hc = document.createElement("canvas"), hctx = hc.getContext("2d");
 const CW = 640, CH = 720, HR = 76, HPS = 3, lim = (v, a, b) => Math.max(a, Math.min(b, v));
 let ac, an, buf, fbuf, dest, rec, chunks = [], sm = 0, gs = 0, hi = 0.5, peak = 0.05, playing = false;
-let faceImg = null, fm = null, marks = [], pscale = 1, skin = "#f0c9a0", skinD = "#b9835c";
+let faceImg = null, fm = null, marks = [], pscale = 1, skin = "#f0c9a0", skinD = "#b9835c", bgRGB = [255, 255, 255], cut = null, cutKey = "";
 $("text").value = sessionStorage.getItem("cm_text") || "";
 $("lang").value = sessionStorage.getItem("cm_lang") || "english";
 
@@ -17,13 +17,38 @@ function drawPreview() {
   if (fm) { const g = faceGeom(); fctx.beginPath(); fctx.arc(g.x * pscale, g.y * pscale, g.r * pscale, 0, Math.PI * 2); fctx.stroke(); }
   marks.forEach((m) => { fctx.beginPath(); fctx.arc(m.x * pscale, m.y * pscale, 4, 0, Math.PI * 2); fctx.fill(); });
 }
-function sampleSkin() {                                   // neck and hands take the skin colour of the picture
+function patchColor(px, py) {                              // average colour of a small patch of the picture
+  const c = document.createElement("canvas"); c.width = c.height = 1; const x = c.getContext("2d");
+  const sx = lim(px - 4, 0, faceImg.width - 8), sy = lim(py - 4, 0, faceImg.height - 8);
+  x.drawImage(faceImg, sx, sy, 8, 8, 0, 0, 1, 1); return Array.from(x.getImageData(0, 0, 1, 1).data).slice(0, 3);
+}
+function sampleSkin() {                                   // neck and hands take the skin colour of the picture (cheek)
   try {
-    const c = document.createElement("canvas"); c.width = c.height = 1; const x = c.getContext("2d");
-    const sy = lim(fm.y + fm.w * 0.9 - 2, 0, faceImg.height - 4), sx = lim(fm.x - 2, 0, faceImg.width - 4);
-    x.drawImage(faceImg, sx, sy, 4, 4, 0, 0, 1, 1);
-    const d = x.getImageData(0, 0, 1, 1).data; skin = `rgb(${d[0]},${d[1]},${d[2]})`; skinD = `rgb(${(d[0] * 0.78) | 0},${(d[1] * 0.78) | 0},${(d[2] * 0.78) | 0})`;
+    const d = patchColor(fm.x - fm.w * 0.5, fm.y - fm.w * 0.3);
+    skin = `rgb(${d[0]},${d[1]},${d[2]})`; skinD = `rgb(${(d[0] * 0.78) | 0},${(d[1] * 0.78) | 0},${(d[2] * 0.78) | 0})`;
+    const cs = [patchColor(6, 6), patchColor(faceImg.width - 6, 6), patchColor(6, faceImg.height - 6), patchColor(faceImg.width - 6, faceImg.height - 6)];
+    bgRGB = [0, 1, 2].map((i) => cs.reduce((s, c) => s + c[i], 0) / 4);        // picture background = colour of the four corners
   } catch (_) {}
+}
+function makeCut() {                                       // the head, cut out of the picture's background (flood fill from the edges)
+  const g = faceGeom(), key = [g.x | 0, g.y | 0, g.r | 0, $("bgrem").checked, bgRGB.join()].join();
+  if (key === cutKey && cut) return cut; cutKey = key;
+  const N = 400, c = document.createElement("canvas"); c.width = c.height = N; const x = c.getContext("2d");
+  x.drawImage(faceImg, g.x - g.r, g.y - g.r, 2 * g.r, 2 * g.r, 0, 0, N, N);
+  if ($("bgrem").checked) {
+    try {
+      const id = x.getImageData(0, 0, N, N), d = id.data, TOL = 46, T2 = TOL * TOL, isBg = new Uint8Array(N * N), q = new Int32Array(N * N); let h = 0, t = 0;
+      const near = (i) => { if (d[i * 4 + 3] < 10) return false; const dr = d[i * 4] - bgRGB[0], dg = d[i * 4 + 1] - bgRGB[1], db = d[i * 4 + 2] - bgRGB[2]; return dr * dr + dg * dg + db * db < T2; };
+      const push = (i) => { if (!isBg[i] && near(i)) { isBg[i] = 1; q[t++] = i; } };
+      for (let k = 0; k < N; k++) { push(k); push((N - 1) * N + k); push(k * N); push(k * N + N - 1); }
+      while (h < t) { const i = q[h++], px = i % N, py = (i / N) | 0; if (px > 0) push(i - 1); if (px < N - 1) push(i + 1); if (py > 0) push(i - N); if (py < N - 1) push(i + N); }
+      for (let i = 0; i < N * N; i++) if (isBg[i]) d[i * 4 + 3] = 0;
+      const keep = new Uint8Array(N * N); for (let i = 0; i < N * N; i++) keep[i] = d[i * 4 + 3] ? 1 : 0;
+      for (let py = 1; py < N - 1; py++) for (let px = 1; px < N - 1; px++) { const i = py * N + px; if (keep[i] && (!keep[i - 1] || !keep[i + 1] || !keep[i - N] || !keep[i + N])) d[i * 4 + 3] = 90; }
+      x.putImageData(id, 0, 0);
+    } catch (_) {}
+  }
+  cut = c; return c;
 }
 $("faceFile").onchange = () => {
   const f = $("faceFile").files[0]; if (!f) return;
@@ -45,9 +70,10 @@ fcv.addEventListener("click", (e) => {
   }
   drawPreview();
 });
-$("fredo").onclick = () => { marks = []; fm = null; skin = "#f0c9a0"; skinD = "#b9835c"; $("fhint").firstChild.textContent = HINT; drawPreview(); };
+$("fredo").onclick = () => { marks = []; fm = null; cutKey = ""; skin = "#f0c9a0"; skinD = "#b9835c"; $("fhint").firstChild.textContent = HINT; drawPreview(); };
 $("fremove").onclick = () => { faceImg = null; fm = null; marks = []; skin = "#f0c9a0"; skinD = "#b9835c"; $("fpanel").hidden = true; $("faceFile").value = ""; };
 $("fsize").oninput = $("fup").oninput = drawPreview;
+$("bgrem").onchange = () => { cutKey = ""; };
 
 /* mouth taken from the picture: opening between the lips + the real lower lip / chin moved down */
 function mouthOpen(g, open, M, map, ps) {
@@ -73,12 +99,11 @@ function drawHead(open, yw) {
   const g = faceGeom(), sc = HR / g.r, S = 2 * HR * HPS;
   if (hc.width !== S) { hc.width = S; hc.height = S; }
   hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, S, S); hctx.setTransform(HPS, 0, 0, HPS, 0, 0);
-  hctx.fillStyle = skin; hctx.fillRect(0, 0, 2 * HR, 2 * HR);
-  hctx.drawImage(faceImg, g.x - g.r, g.y - g.r, 2 * g.r, 2 * g.r, 0, 0, 2 * HR, 2 * HR);
+  hctx.drawImage(makeCut(), 0, 0, 2 * HR, 2 * HR);
   if (open > 0.03) mouthOpen(hctx, open, { x: HR + (fm.x - g.x) * sc, y: HR + (fm.y - g.y) * sc, w: fm.w * sc },
     { sx: (dx) => g.x + (dx - HR) / sc, sy: (dy) => g.y + (dy - HR) / sc, ks: 1 / sc }, HPS);
   hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.globalCompositeOperation = "destination-in";     // soft round edge
-  const gr = hctx.createRadialGradient(S / 2, S / 2, S * 0.43, S / 2, S / 2, S / 2); gr.addColorStop(0, "rgba(0,0,0,1)"); gr.addColorStop(1, "rgba(0,0,0,0)");
+  const gr = hctx.createRadialGradient(S / 2, S / 2, S * 0.4, S / 2, S / 2, S / 2); gr.addColorStop(0, "rgba(0,0,0,1)"); gr.addColorStop(1, "rgba(0,0,0,0)");
   hctx.fillStyle = gr; hctx.fillRect(0, 0, S, S); hctx.globalCompositeOperation = "source-over";
   ctx.save(); ctx.translate(320 + yw * 9, 204); ctx.scale(1 - 0.07 * yw, 1); ctx.drawImage(hc, -HR, -HR, 2 * HR, 2 * HR); ctx.restore();
 }

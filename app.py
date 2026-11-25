@@ -1,4 +1,4 @@
-import os, uuid, time, glob, asyncio, json, base64, threading, urllib.request, urllib.parse, urllib.error
+import os, re, uuid, time, glob, asyncio, json, base64, threading, urllib.request, urllib.parse, urllib.error
 from flask import Flask, render_template, request, jsonify
 from dotenv import load_dotenv
 from google import genai
@@ -51,13 +51,27 @@ def make_script(text, tone, lang):
     )
     resp = client.models.generate_content(
         model=MODEL, contents=text,
-        config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=700),
+        config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=2048),
     )
     return (resp.text or "").strip()
 
 
 async def make_audio(script, voice, path):
     await edge_tts.Communicate(script, voice).save(path)
+
+
+def make_audio_retry(script, voice, path):
+    last = None
+    for _ in range(3):
+        try:
+            asyncio.run(make_audio(script, voice, path))
+            if os.path.exists(path) and os.path.getsize(path) > 500:
+                return
+            last = RuntimeError("the voice service returned an empty file")
+        except Exception as e:
+            last = e
+        time.sleep(1.2)
+    raise last
 
 
 @app.route("/")
@@ -81,16 +95,19 @@ def generate():
 
     try:
         script = text if data.get("raw") else make_script(text, tone, lang)
+        script = re.sub(r"[*_#`>~|]+", " ", script).strip()
+        if not script:                      # the AI returned nothing: speak the user's own text instead
+            script = text
         voice = TONES[tone][1] if lang == "english" else TONES[tone][2]
         cleanup_old_audio()
         name = f"{uuid.uuid4().hex}.mp3"
-        asyncio.run(make_audio(script, voice, os.path.join(AUDIO_DIR, name)))
+        make_audio_retry(script, voice, os.path.join(AUDIO_DIR, name))
         return jsonify(script=script, audio_url=f"/static/audio/{name}")
     except errors.APIError as e:
         return api_error_response(e)
     except Exception as e:
         app.logger.exception(e)
-        return jsonify(error="Something went wrong. Please try again."), 500
+        return jsonify(error="Voice/AI problem (%s): %s" % (type(e).__name__, str(e)[:160])), 500
 
 
 def api_error_response(e):
