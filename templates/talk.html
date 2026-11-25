@@ -3,26 +3,26 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ClassMitra Talking Character</title>
+<title>ClassMitra Talking Teacher</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='talk.css') }}">
 </head>
 <body>
 <main>
   <a class="back" href="/screen">&larr; Back to slides</a>
-  <h1>Talking Character</h1>
-  <p class="sub">A character explains your text: the mouth moves with the voice and the arms gesture while it speaks.</p>
+  <h1>Talking Teacher</h1>
+  <p class="sub">A teacher in a suit explains your text to a screen: the mouth moves with the voice, the head turns to the screen and the hands point and explain.</p>
 
-  <label>1. Choose who speaks</label>
-  <div class="modes">
-    <label class="opt"><input type="radio" name="mode" value="char" checked> Line character (lips + hands + body move)</label>
-    <label class="opt"><input type="radio" name="mode" value="photo"> My own picture (lips + head only)</label>
-  </div>
-
-  <div id="photoBox" hidden>
-    <label for="file">Upload a picture (front-facing, mouth closed works best)</label>
-    <input type="file" id="file" accept="image/*">
-    <p class="hint" id="hintm" hidden>2. Click the LEFT corner of the mouth, then the RIGHT corner. <button id="remark" type="button">Redo</button></p>
+  <label for="faceFile">1. Your face (optional)</label>
+  <input type="file" id="faceFile" accept="image/*">
+  <p class="hint">Upload a front-facing picture. It replaces the circle face, and the mouth moves like the mouth in your picture.</p>
+  <div id="fpanel" hidden>
+    <canvas id="fcv"></canvas>
+    <p class="hint" id="fhint">Click the LEFT corner of the mouth, then the RIGHT corner. <button id="fredo" type="button">Redo</button> <button id="fremove" type="button">Remove face</button></p>
+    <div class="row">
+      <div><label for="fsize">Face size</label><input type="range" id="fsize" min="0.6" max="1.6" step="0.05" value="1"></div>
+      <div><label for="fup">Face up / down</label><input type="range" id="fup" min="-0.4" max="0.4" step="0.02" value="0"></div>
+    </div>
   </div>
 
   <canvas id="cv" width="640" height="720"></canvas>
@@ -31,25 +31,24 @@
   <textarea id="text" maxlength="1500" placeholder="Paste your lines here"></textarea>
 
   <div class="row">
-    <div><label for="tone">Speaking style (also changes the character's look)</label>
+    <div><label for="tone">Speaking style</label>
       <select id="tone">{% for t in tones %}<option value="{{ t }}">{{ t|capitalize }}</option>{% endfor %}</select></div>
     <div><label for="lang">Language</label>
       <select id="lang"><option value="english">English</option><option value="hindi">हिन्दी</option></select></div>
   </div>
   <label class="chk"><input type="checkbox" id="raw"> Read my text exactly (no rewriting)</label>
-  <label class="chk" id="boardRow"><input type="checkbox" id="board" checked> Show a screen behind the teacher (the teacher points at it while explaining)</label>
-  <label class="chk" id="zoomRow" hidden><input type="checkbox" id="zoom" checked> Zoom in on the face (makes lip movement easier to see)</label>
+  <label class="chk"><input type="checkbox" id="board" checked> Show a screen behind the teacher (the teacher points at it while explaining)</label>
 
   <div class="row">
-    <div><label for="strength">Mouth opening</label><input type="range" id="strength" min="0.5" max="3" step="0.1" value="1.5"></div>
-    <div><label for="move">Body / head movement</label><input type="range" id="move" min="0" max="2" step="0.1" value="1"></div>
+    <div><label for="strength">Mouth opening</label><input type="range" id="strength" min="0.5" max="2" step="0.1" value="1"></div>
+    <div><label for="move">Hand / body movement</label><input type="range" id="move" min="0" max="1.5" step="0.1" value="1"></div>
   </div>
 
   <button id="go" class="go">Make it talk</button>
   <p id="msg" role="status"></p>
   <audio id="au" controls hidden></audio>
   <p id="script"></p>
-  <div class="acts"><button id="replay" type="button" hidden>Replay</button><a id="dl" hidden download="talking-character.webm">Download video (WebM)</a></div>
+  <div class="acts"><button id="replay" type="button" hidden>Replay</button><a id="dl" hidden download="talking-teacher.webm">Download video (WebM)</a></div>
 </main>
 <script src="{{ url_for('static', filename='talk.js') }}"></script>
 </body>

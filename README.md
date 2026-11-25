@@ -33,5 +33,5 @@ Each slide gets its own scene prompt. Use "New image" or "Describe image" in the
 ## Talking Image (/talk)
 Upload a picture, click the two mouth corners, add text: the face moves its mouth and head with the voice. Free, runs in the browser. Download as WebM.
 
-## Talking Character (/talk)
+## Talking Teacher (/talk)
 Default: built-in line character (circle face, moving mouth, arms with shoulder-elbow-wrist lines, hands, legs) that gestures while the voice speaks. Optional: your own picture (lips + head only). Free, runs in the browser; download as WebM.
