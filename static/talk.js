@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d"), fcv = $("fcv"), fctx = fcv.getContext("2d");
 const off = document.createElement("canvas"), octx = off.getContext("2d"), hc = document.createElement("canvas"), hctx = hc.getContext("2d");
-const CW = 640, CH = 720, HR = 76, HPS = 3, lim = (v, a, b) => Math.max(a, Math.min(b, v));
+const CW = 640, CH = 720, HPS = 2.5, MWD = 46, lim = (v, a, b) => Math.max(a, Math.min(b, v));
 let ac, an, buf, fbuf, dest, rec, chunks = [], sm = 0, gs = 0, hi = 0.5, peak = 0.05, playing = false;
 let faceImg = null, fm = null, marks = [], pscale = 1, skin = "#f0c9a0", skinD = "#b9835c", bgRGB = [255, 255, 255], cut = null, cutKey = "";
 $("text").value = sessionStorage.getItem("cm_text") || "";
@@ -9,12 +9,12 @@ $("lang").value = sessionStorage.getItem("cm_lang") || "english";
 
 /* ================= face: upload, mark the mouth, circle crop ================= */
 const HINT = "Click the LEFT corner of the mouth, then the RIGHT corner. ";
-function faceGeom() { const s = +$("fsize").value, up = +$("fup").value; return { x: fm.x, y: fm.y - (0.7 + up) * fm.w, r: 1.55 * fm.w * s }; }
+function faceGeom() { const w = fm.w, s = +$("fsize").value; return { x0: fm.x - 2.4 * w, y0: fm.y - 3.3 * w, cw: 4.8 * w, ch: 4.5 * w, sc: (MWD * s) / w }; }
 function drawPreview() {
   if (!faceImg) return;
   fctx.clearRect(0, 0, fcv.width, fcv.height); fctx.drawImage(faceImg, 0, 0, fcv.width, fcv.height);
   fctx.strokeStyle = "#ff7a1a"; fctx.fillStyle = "#ff7a1a"; fctx.lineWidth = 2;
-  if (fm) { const g = faceGeom(); fctx.beginPath(); fctx.arc(g.x * pscale, g.y * pscale, g.r * pscale, 0, Math.PI * 2); fctx.stroke(); }
+  if (fm) { const g = faceGeom(); fctx.strokeRect(g.x0 * pscale, g.y0 * pscale, g.cw * pscale, g.ch * pscale); }
   marks.forEach((m) => { fctx.beginPath(); fctx.arc(m.x * pscale, m.y * pscale, 4, 0, Math.PI * 2); fctx.fill(); });
 }
 function patchColor(px, py) {                              // average colour of a small patch of the picture
@@ -30,24 +30,30 @@ function sampleSkin() {                                   // neck and hands take
     bgRGB = [0, 1, 2].map((i) => cs.reduce((s, c) => s + c[i], 0) / 4);        // picture background = colour of the four corners
   } catch (_) {}
 }
-function makeCut() {                                       // the head, cut out of the picture's background (flood fill from the edges)
-  const g = faceGeom(), key = [g.x | 0, g.y | 0, g.r | 0, $("bgrem").checked, bgRGB.join()].join();
+function makeCut() {                                       // the head cut out of the picture's background, faded under the chin
+  const g = faceGeom(), key = [g.x0 | 0, g.y0 | 0, g.cw | 0, $("bgrem").checked, bgRGB.join()].join();
   if (key === cutKey && cut) return cut; cutKey = key;
-  const N = 400, c = document.createElement("canvas"); c.width = c.height = N; const x = c.getContext("2d");
-  x.drawImage(faceImg, g.x - g.r, g.y - g.r, 2 * g.r, 2 * g.r, 0, 0, N, N);
-  if ($("bgrem").checked) {
-    try {
-      const id = x.getImageData(0, 0, N, N), d = id.data, TOL = 46, T2 = TOL * TOL, isBg = new Uint8Array(N * N), q = new Int32Array(N * N); let h = 0, t = 0;
+  const Nx = 480, Ny = Math.round((Nx * g.ch) / g.cw), c = document.createElement("canvas"); c.width = Nx; c.height = Ny; const x = c.getContext("2d");
+  x.drawImage(faceImg, g.x0, g.y0, g.cw, g.ch, 0, 0, Nx, Ny);
+  try {
+    const id = x.getImageData(0, 0, Nx, Ny), d = id.data;
+    if ($("bgrem").checked) {
+      const T2 = 46 * 46, isBg = new Uint8Array(Nx * Ny), q = new Int32Array(Nx * Ny); let h = 0, t = 0;
       const near = (i) => { if (d[i * 4 + 3] < 10) return false; const dr = d[i * 4] - bgRGB[0], dg = d[i * 4 + 1] - bgRGB[1], db = d[i * 4 + 2] - bgRGB[2]; return dr * dr + dg * dg + db * db < T2; };
       const push = (i) => { if (!isBg[i] && near(i)) { isBg[i] = 1; q[t++] = i; } };
-      for (let k = 0; k < N; k++) { push(k); push((N - 1) * N + k); push(k * N); push(k * N + N - 1); }
-      while (h < t) { const i = q[h++], px = i % N, py = (i / N) | 0; if (px > 0) push(i - 1); if (px < N - 1) push(i + 1); if (py > 0) push(i - N); if (py < N - 1) push(i + N); }
-      for (let i = 0; i < N * N; i++) if (isBg[i]) d[i * 4 + 3] = 0;
-      const keep = new Uint8Array(N * N); for (let i = 0; i < N * N; i++) keep[i] = d[i * 4 + 3] ? 1 : 0;
-      for (let py = 1; py < N - 1; py++) for (let px = 1; px < N - 1; px++) { const i = py * N + px; if (keep[i] && (!keep[i - 1] || !keep[i + 1] || !keep[i - N] || !keep[i + N])) d[i * 4 + 3] = 90; }
-      x.putImageData(id, 0, 0);
-    } catch (_) {}
-  }
+      for (let k = 0; k < Nx; k++) { push(k); push((Ny - 1) * Nx + k); }
+      for (let k = 0; k < Ny; k++) { push(k * Nx); push(k * Nx + Nx - 1); }
+      while (h < t) { const i = q[h++], px = i % Nx, py = (i / Nx) | 0; if (px > 0) push(i - 1); if (px < Nx - 1) push(i + 1); if (py > 0) push(i - Nx); if (py < Ny - 1) push(i + Nx); }
+      for (let i = 0; i < Nx * Ny; i++) if (isBg[i]) d[i * 4 + 3] = 0;
+      const keep = new Uint8Array(Nx * Ny); for (let i = 0; i < Nx * Ny; i++) keep[i] = d[i * 4 + 3] ? 1 : 0;
+      for (let py = 1; py < Ny - 1; py++) for (let px = 1; px < Nx - 1; px++) { const i = py * Nx + px; if (keep[i] && (!keep[i - 1] || !keep[i + 1] || !keep[i - Nx] || !keep[i + Nx])) d[i * 4 + 3] = 90; }
+    } else {                                               // no background removal: soft oval so there is no box
+      for (let py = 0; py < Ny; py++) for (let px = 0; px < Nx; px++) { const nx = (px / Nx - 0.5) * 2, ny = (py / Ny - 0.5) * 2; d[(py * Nx + px) * 4 + 3] *= lim((1 - Math.hypot(nx, ny)) / 0.2, 0, 1); }
+    }
+    const c0 = ((fm.y + 0.85 * fm.w - g.y0) / g.ch) * Ny, c1 = ((fm.y + 1.15 * fm.w - g.y0) / g.ch) * Ny;   // fade under the chin
+    for (let py = Math.max(0, Math.floor(c0)); py < Ny; py++) { const f = lim(1 - (py - c0) / (c1 - c0), 0, 1); for (let px = 0; px < Nx; px++) d[(py * Nx + px) * 4 + 3] *= f; }
+    x.putImageData(id, 0, 0);
+  } catch (_) {}
   cut = c; return c;
 }
 $("faceFile").onchange = () => {
@@ -96,16 +102,13 @@ function mouthOpen(g, open, M, map, ps) {
   g.drawImage(off, x - jw / 2, top + mh * 0.85, jw, jh);
 }
 function drawHead(open, yw) {
-  const g = faceGeom(), sc = HR / g.r, S = 2 * HR * HPS;
-  if (hc.width !== S) { hc.width = S; hc.height = S; }
-  hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, S, S); hctx.setTransform(HPS, 0, 0, HPS, 0, 0);
-  hctx.drawImage(makeCut(), 0, 0, 2 * HR, 2 * HR);
-  if (open > 0.03) mouthOpen(hctx, open, { x: HR + (fm.x - g.x) * sc, y: HR + (fm.y - g.y) * sc, w: fm.w * sc },
-    { sx: (dx) => g.x + (dx - HR) / sc, sy: (dy) => g.y + (dy - HR) / sc, ks: 1 / sc }, HPS);
-  hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.globalCompositeOperation = "destination-in";     // soft round edge
-  const gr = hctx.createRadialGradient(S / 2, S / 2, S * 0.4, S / 2, S / 2, S / 2); gr.addColorStop(0, "rgba(0,0,0,1)"); gr.addColorStop(1, "rgba(0,0,0,0)");
-  hctx.fillStyle = gr; hctx.fillRect(0, 0, S, S); hctx.globalCompositeOperation = "source-over";
-  ctx.save(); ctx.translate(320 + yw * 9, 204); ctx.scale(1 - 0.07 * yw, 1); ctx.drawImage(hc, -HR, -HR, 2 * HR, 2 * HR); ctx.restore();
+  const g = faceGeom(), DW = g.cw * g.sc, DH = g.ch * g.sc, W = Math.ceil(DW * HPS), H = Math.ceil(DH * HPS);
+  if (hc.width !== W || hc.height !== H) { hc.width = W; hc.height = H; }
+  hctx.setTransform(1, 0, 0, 1, 0, 0); hctx.clearRect(0, 0, W, H); hctx.drawImage(makeCut(), 0, 0, W, H);
+  hctx.setTransform(W / DW, 0, 0, H / DH, 0, 0);
+  const mx = (fm.x - g.x0) * g.sc, my = (fm.y - g.y0) * g.sc;
+  if (open > 0.03) mouthOpen(hctx, open, { x: mx, y: my, w: fm.w * g.sc }, { sx: (dx) => g.x0 + dx / g.sc, sy: (dy) => g.y0 + dy / g.sc, ks: 1 / g.sc }, HPS);
+  ctx.save(); ctx.translate(320 + yw * 9, 236 + +$("fup").value * 100); ctx.scale(1 - 0.07 * yw, 1); ctx.drawImage(hc, -mx, -my, DW, DH); ctx.restore();
 }
 
 /* ================= arms: gestures with real arm geometry (2-bone IK) ================= */
@@ -119,12 +122,16 @@ const GEST = [   // hand targets (x, y, hold seconds). board:1 = points at the s
   { R: [[505, 342, 1.3]], L: [[140, 342, 1.3]] },                                                             // arms wide: "all of this"
   { R: [[436, 318, 0.6], [446, 296, 0.6], [436, 318, 0.6]] },                                                 // small emphasis
 ];
+const bd = { lines: [], cum: [], total: 0 };
+let rd = { on: false, idx: 0, frac: 0 };
 const arms = { rx: REST_R[0], ry: REST_R[1], lx: REST_L[0], ly: REST_L[1] }, seq = { g: null, wi: 0, until: 0, gap: 0 };
 let lastT = 0, lastG = -1, yaw = 0;
-function updateArms(t, speaking, board, mv) {
+function updateArms(t, speaking, board, mv, read) {
   const dt = Math.min(0.1, Math.max(0, t - lastT)); lastT = t;
   let tr = REST_R, tl = REST_L;
-  if (speaking) {
+  if (read) { tr = [read.x, read.y]; seq.g = { point: !!read.point, look: !!read.look, pseudo: 1 }; }
+  else if (speaking) {
+    if (seq.g && seq.g.pseudo) seq.g = null;
     if (!seq.g) {
       if (t >= seq.gap) {
         const pool = GEST.map((_, i) => i).filter((i) => i !== lastG && (board || !GEST[i].board));
@@ -137,7 +144,7 @@ function updateArms(t, speaking, board, mv) {
     }
     if (seq.g) { tr = seq.g.R[seq.wi]; if (seq.g.L) tl = seq.g.L[seq.wi]; }
   } else seq.g = null;
-  const tx = (a, r) => r[0] + (a[0] - r[0]) * mv, ty = (a, r) => r[1] + (a[1] - r[1]) * mv, k = 1 - Math.exp(-dt * 5.5);
+  const tx = (a, r) => r[0] + (a[0] - r[0]) * mv, ty = (a, r) => r[1] + (a[1] - r[1]) * mv, k = 1 - Math.exp(-dt * (read ? 8 : 5.5));
   arms.rx += (tx(tr, REST_R) - arms.rx) * k; arms.ry += (ty(tr, REST_R) - arms.ry) * k;
   arms.lx += (tx(tl, REST_L) - arms.lx) * k; arms.ly += (ty(tl, REST_L) - arms.ly) * k;
   yaw += ((seq.g && seq.g.look ? 1 : 0) - yaw) * (1 - Math.exp(-dt * 3));      // head turns to the screen, then back to us
@@ -148,10 +155,11 @@ function arm(side, sx, sy, tx, ty, o, point) {
   const b = Math.acos(lim((ARM1 * ARM1 + d * d - ARM2 * ARM2) / (2 * ARM1 * d), -1, 1)), ea = a + side * b;
   const ex = sx + Math.cos(ea) * ARM1, ey = sy + Math.sin(ea) * ARM1, wx = sx + Math.cos(a) * d, wy = sy + Math.sin(a) * d;
   const fl = Math.hypot(wx - ex, wy - ey) || 1, ux = (wx - ex) / fl, uy = (wy - ey) / fl;
-  ctx.lineWidth = 25; ctx.strokeStyle = o.top; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.lineTo(wx, wy); ctx.stroke();
-  if (o.cuff) { ctx.strokeStyle = o.cuff; ctx.lineWidth = 20; ctx.beginPath(); ctx.moveTo(wx - ux * 11, wy - uy * 11); ctx.lineTo(wx, wy); ctx.stroke(); }
-  if (point) { ctx.strokeStyle = skin; ctx.lineWidth = 7; ctx.beginPath(); ctx.moveTo(wx + ux * 8, wy + uy * 8); ctx.lineTo(wx + ux * 30, wy + uy * 30); ctx.stroke(); }   // pointing finger
-  ctx.fillStyle = skin; ctx.strokeStyle = skinD; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(wx + ux * 12, wy + uy * 12, 11.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.lineWidth = 44; ctx.strokeStyle = o.top2 || "rgba(0,0,0,.4)"; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.lineTo(wx, wy); ctx.stroke();
+  ctx.lineWidth = 38; ctx.strokeStyle = o.top; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.lineTo(wx, wy); ctx.stroke();
+  if (o.cuff) { ctx.strokeStyle = o.cuff; ctx.lineWidth = 31; ctx.beginPath(); ctx.moveTo(wx - ux * 12, wy - uy * 12); ctx.lineTo(wx, wy); ctx.stroke(); }
+  if (point) { ctx.strokeStyle = skin; ctx.lineWidth = 9; ctx.beginPath(); ctx.moveTo(wx + ux * 8, wy + uy * 8); ctx.lineTo(wx + ux * 44, wy + uy * 44); ctx.stroke(); }   // pointing finger
+  ctx.fillStyle = skin; ctx.strokeStyle = skinD; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(wx + ux * 14, wy + uy * 14, 14, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 }
 
 /* ================= the teacher ================= */
@@ -161,52 +169,69 @@ const OUTFIT = {
   cricketer: { top: "#2d6bd6", pants: "#f0f0f0", shoes: "#ffffff", hair: "#2e211b", cuff: "#ffffff" },
 };
 const OUT_DEFAULT = { suit: 1, top: "#34343f", top2: "#25252e", under: "#f6f6f6", tie: "#1f6f8b", pants: "#26262e", shoes: "#16110d", hair: "#2e211b", cuff: "#f6f6f6" };
-const DARK = "#2b1d14", LINES_Y = [215, 255, 295, 335, 375];
+const DARK = "#2b1d14", LY = [200, 236, 272, 308, 344, 380], TX = 345, TW = 195, FONT = "15px 'Segoe UI','Nirmala UI',sans-serif";
 const poly = (pts, fill, stroke) => { ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y))); ctx.closePath(); if (fill) { ctx.fillStyle = fill; ctx.fill(); } if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 3; ctx.stroke(); } };
-function drawBoard(hy, on) {
-  ctx.fillStyle = "#f7f3ea"; ctx.strokeStyle = "#c8a24a"; ctx.lineWidth = 7;
-  ctx.beginPath(); ctx.rect(255, 110, 360, 310); ctx.fill(); ctx.stroke();
-  ctx.fillStyle = "#2b3a67"; ctx.fillRect(262, 117, 346, 34); ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.fillRect(374, 129, 130, 10);
-  let hl = -1; if (on) { let d = 1e9; LINES_Y.forEach((y, i) => { if (Math.abs(y - hy) < d) { d = Math.abs(y - hy); hl = i; } }); }
-  LINES_Y.forEach((y, i) => {
-    if (i === hl) { ctx.fillStyle = "rgba(255,196,50,.6)"; ctx.fillRect(358, y - 14, 242, 28); }
-    ctx.fillStyle = "#8b95a5"; ctx.fillRect(368, y - 5, [200, 160, 215, 130, 180][i], 10);
-  });
+function setBoard(txt) {                                   // the spoken text, wrapped to the screen's width
+  ctx.font = FONT; const words = String(txt).replace(/\s+/g, " ").trim().split(" "), lines = []; let cur = "";
+  for (const w of words) { const t = cur ? cur + " " + w : w; if (ctx.measureText(t).width > TW && cur) { lines.push(cur); cur = w; } else cur = t; }
+  if (cur) lines.push(cur);
+  let s = 0; bd.lines = lines; bd.cum = lines.map((l) => (s += l.length + 1)); bd.total = s;
+}
+function drawBoard() {
+  ctx.fillStyle = "#f7f3ea"; ctx.strokeStyle = "#c8a24a"; ctx.lineWidth = 7; ctx.beginPath(); ctx.rect(290, 110, 270, 310); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = "#2b3a67"; ctx.fillRect(297, 117, 256, 34); ctx.fillStyle = "rgba(255,255,255,.85)"; ctx.fillRect(345, 129, 110, 10);
+  if (!bd.lines.length) { ctx.fillStyle = "#8b95a5"; LY.forEach((y, i) => ctx.fillRect(TX, y - 5, [180, 140, 190, 110, 160, 130][i], 10)); return; }
+  const first = rd.on ? Math.floor(rd.idx / 6) * 6 : 0; ctx.font = FONT; ctx.textBaseline = "middle"; ctx.textAlign = "left";
+  for (let k = 0; k < 6; k++) {
+    const i = first + k; if (i >= bd.lines.length) break; const y = LY[k], cur = rd.on && i === rd.idx;
+    if (cur) { ctx.fillStyle = "rgba(255,196,50,.45)"; ctx.fillRect(TX - 8, y - 16, TW + 16, 32); ctx.fillStyle = "rgba(235,160,0,.95)"; ctx.fillRect(TX - 8, y + 12, (ctx.measureText(bd.lines[i]).width + 16) * rd.frac, 4); }
+    ctx.fillStyle = rd.on && i < rd.idx ? "#7a8394" : "#1f2a44"; ctx.fillText(bd.lines[i], TX, y);
+  }
 }
 function drawChar(open, amp, t) {
   const mv = +$("move").value, tone = $("tone").value, o = OUTFIT[tone] || OUT_DEFAULT, board = $("board").checked, g = lim(gs * 2.2, 0, 1);
-  updateArms(t, gs > 0.1, board, mv);
-  const shift = (board ? -40 : 0) + Math.sin(t * 0.8) * 2 * (0.3 + g) * mv, br = Math.sin(t * 1.6) * 2, hasFace = faceImg && fm;
+  let read = null;                                          // the hand follows the line being spoken, left to right
+  if (board && rd.on && bd.lines.length) {
+    const first = Math.floor(rd.idx / 6) * 6, k = rd.idx - first; ctx.font = FONT;
+    read = rd.idx % 4 === 3 ? { x: 458, y: 364 } : { x: TX + 70 + rd.frac * ctx.measureText(bd.lines[rd.idx]).width - 28, y: LY[k] + 40, point: 1, look: 1 };
+  }
+  updateArms(t, gs > 0.1, board, mv, read);
+  const shift = (board ? -70 : 0) + Math.sin(t * 0.8) * 2 * (0.3 + g) * mv, br = Math.sin(t * 1.6) * 2, hasFace = faceImg && fm;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   const bg = ctx.createLinearGradient(0, 0, 0, CH); bg.addColorStop(0, "#1b2a49"); bg.addColorStop(1, "#0d1730");
   ctx.fillStyle = bg; ctx.fillRect(0, 0, CW, CH); ctx.lineCap = "round"; ctx.lineJoin = "round";
-  if (board) drawBoard(arms.ry, !!(seq.g && seq.g.point));
+  if (board) drawBoard();
   ctx.strokeStyle = "rgba(245,237,230,.22)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(60, 672); ctx.lineTo(600, 672); ctx.stroke();
   ctx.save(); ctx.translate(shift, 0);
   for (const side of [-1, 1]) {                                               // trousers + shoes
-    const hx = 320 + side * 22, kx = hx + side * 9, ax = kx + side * 4;
-    ctx.strokeStyle = o.pants; ctx.lineWidth = 28; ctx.beginPath(); ctx.moveTo(hx, 496); ctx.lineTo(kx, 585); ctx.lineTo(ax, 662); ctx.stroke();
-    ctx.strokeStyle = o.shoes; ctx.lineWidth = 16; ctx.beginPath(); ctx.moveTo(ax, 666); ctx.lineTo(ax + side * 28, 666); ctx.stroke();
+    const hx = 320 + side * 25, kx = hx + side * 8, ax = kx + side * 3;
+    ctx.strokeStyle = "rgba(0,0,0,.35)"; ctx.lineWidth = 46; ctx.beginPath(); ctx.moveTo(hx, 496); ctx.lineTo(kx, 585); ctx.lineTo(ax, 662); ctx.stroke();
+    ctx.strokeStyle = o.pants; ctx.lineWidth = 41; ctx.beginPath(); ctx.moveTo(hx, 496); ctx.lineTo(kx, 585); ctx.lineTo(ax, 662); ctx.stroke();
+    ctx.strokeStyle = "rgba(0,0,0,.18)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(hx, 530); ctx.lineTo(ax, 650); ctx.stroke();
+    ctx.strokeStyle = o.shoes; ctx.lineWidth = 22; ctx.beginPath(); ctx.moveTo(ax - side * 4, 664); ctx.lineTo(ax + side * 34, 664); ctx.stroke();
   }
   if (o.suit) {                                                               // coat, lapels, shirt, tie, buttons, pocket square
-    ctx.fillStyle = o.top; ctx.beginPath(); ctx.moveTo(264, 290 + br); ctx.quadraticCurveTo(250, 292 + br, 252, 306);
-    ctx.lineTo(258, 524); ctx.lineTo(382, 524); ctx.lineTo(388, 306); ctx.quadraticCurveTo(390, 292 + br, 376, 290 + br); ctx.closePath(); ctx.fill();
-    poly([[298, 288 + br], [342, 288 + br], [320, 356]], o.under);
-    poly([[314, 306], [326, 306], [332, 424], [320, 440], [308, 424]], o.tie); poly([[313, 298], [327, 298], [324, 312], [316, 312]], o.tie);
-    poly([[286, 292 + br], [302, 289 + br], [322, 358], [296, 386]], o.top2, "rgba(0,0,0,.35)"); poly([[354, 292 + br], [338, 289 + br], [318, 358], [344, 386]], o.top2, "rgba(0,0,0,.35)");
-    ctx.strokeStyle = "rgba(0,0,0,.3)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(320, 392); ctx.lineTo(320, 524); ctx.stroke();
-    ctx.fillStyle = "#0f0f14"; for (const by of [452, 488]) { ctx.beginPath(); ctx.arc(329, by, 4.5, 0, Math.PI * 2); ctx.fill(); }
-    poly([[350, 346], [366, 344], [366, 353], [350, 355]], "#ffffff");
+    ctx.fillStyle = o.top; ctx.strokeStyle = "rgba(0,0,0,.4)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(256, 288 + br); ctx.quadraticCurveTo(234, 290 + br, 237, 316);
+    ctx.lineTo(243, 534); ctx.lineTo(397, 534); ctx.lineTo(403, 316); ctx.quadraticCurveTo(406, 290 + br, 384, 288 + br); ctx.closePath(); ctx.fill(); ctx.stroke();
+    for (const sx of [262, 378]) { ctx.beginPath(); ctx.arc(sx, 304 + br, 26, 0, Math.PI * 2); ctx.fillStyle = o.top; ctx.fill(); }   // padded shoulders
+    poly([[294, 288 + br], [346, 288 + br], [320, 360]], o.under);
+    poly([[312, 308], [328, 308], [337, 430], [320, 448], [303, 430]], o.tie); poly([[311, 298], [329, 298], [325, 314], [315, 314]], o.tie);
+    poly([[270, 292 + br], [298, 288 + br], [324, 364], [288, 398]], o.top2, "rgba(0,0,0,.35)"); poly([[370, 292 + br], [342, 288 + br], [316, 364], [352, 398]], o.top2, "rgba(0,0,0,.35)");
+    ctx.strokeStyle = "rgba(0,0,0,.3)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(320, 404); ctx.lineTo(320, 534); ctx.stroke();
+    ctx.fillStyle = "#0f0f14"; for (const by of [462, 500]) { ctx.beginPath(); ctx.arc(332, by, 5.5, 0, Math.PI * 2); ctx.fill(); }
+    poly([[352, 350], [376, 347], [376, 358], [352, 361]], "#ffffff");
   } else {
-    poly([[254, 296 + br], [386, 296 + br], [376, 500], [264, 500]], o.top);
+    poly([[238, 296 + br], [402, 296 + br], [394, 520], [246, 520]], o.top, "rgba(0,0,0,.35)");
+    for (const sx of [262, 378]) { ctx.beginPath(); ctx.arc(sx, 306 + br, 26, 0, Math.PI * 2); ctx.fillStyle = o.top; ctx.fill(); }
     ctx.strokeStyle = "rgba(0,0,0,.3)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(320, 296 + br, 20, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
   }
   const pointing = !!(seq.g && seq.g.point);
   arm(1, 378, 298 + br, arms.rx, arms.ry, o, pointing); arm(-1, 262, 298 + br, arms.lx, arms.ly, o, false);
   ctx.save(); ctx.translate(320, 262); ctx.rotate((Math.sin(t * 1.1) * 0.03 * (0.4 + g) + (amp - 0.3) * 0.02 + yaw * 0.05) * mv); ctx.translate(-320, -262 + amp * 2 * mv);
-  ctx.strokeStyle = skin; ctx.lineWidth = hasFace ? 30 : 16; ctx.beginPath(); ctx.moveTo(320, hasFace ? 250 : 246); ctx.lineTo(320, 292); ctx.stroke();   // neck
+  ctx.strokeStyle = skin; ctx.lineWidth = hasFace ? 36 : 18; ctx.beginPath(); ctx.moveTo(320, hasFace ? 250 : 246); ctx.lineTo(320, 296); ctx.stroke();   // neck
   if (hasFace) drawHead(open, yaw);
   else {
+    ctx.save(); ctx.translate(320, 262); ctx.scale(1.14, 1.14); ctx.translate(-320, -262);
     ctx.beginPath(); ctx.arc(320, 190, 62, 0, Math.PI * 2); ctx.fillStyle = skin; ctx.fill();
     ctx.save(); ctx.beginPath(); ctx.arc(320, 190, 62, 0, Math.PI * 2); ctx.clip(); ctx.fillStyle = o.hair; ctx.beginPath(); ctx.ellipse(320, 138, 78, 38, 0, 0, Math.PI * 2); ctx.fill(); ctx.restore();
     ctx.strokeStyle = skinD; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(320, 190, 62, 0, Math.PI * 2); ctx.stroke();
@@ -223,6 +248,7 @@ function drawChar(open, amp, t) {
     if (tone === "teacher") { ctx.strokeStyle = "#222"; for (const ex of [298, 342]) { ctx.beginPath(); ctx.arc(ex + yx, 184, 17, 0, Math.PI * 2); ctx.stroke(); } ctx.beginPath(); ctx.moveTo(315 + yx, 182); ctx.lineTo(325 + yx, 182); ctx.moveTo(281 + yx, 182); ctx.lineTo(262 + yx, 178); ctx.moveTo(359 + yx, 182); ctx.lineTo(378 + yx, 178); ctx.stroke(); }
     else if (tone === "farmer") { ctx.strokeStyle = "#e0b050"; ctx.fillStyle = "#e9c36a"; ctx.lineWidth = 5; ctx.beginPath(); ctx.ellipse(320, 140, 96, 16, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.moveTo(262, 138); ctx.quadraticCurveTo(320, 52, 378, 138); ctx.closePath(); ctx.fill(); ctx.stroke(); }
     else if (tone === "cricketer") { ctx.strokeStyle = "#1f4fa0"; ctx.fillStyle = "#4aa3ff"; ctx.lineWidth = 5; ctx.beginPath(); ctx.moveTo(258, 150); ctx.bezierCurveTo(258, 80, 382, 80, 382, 150); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.beginPath(); ctx.ellipse(320, 152, 72, 10, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
+    ctx.restore();
   }
   ctx.restore(); ctx.restore();
 }
@@ -246,6 +272,8 @@ function loop() {
   const { rms, h } = analyse(); peak = Math.max(peak * 0.996, rms, 0.04);
   const a = rms < 0.015 ? 0 : lim((rms / peak - 0.15) * 1.5, 0, 1);              // silence = closed mouth
   sm += (a - sm) * (a > sm ? 0.55 : 0.3); hi += (h - hi) * 0.2; gs = gs * 0.94 + sm * 0.06;   // quick open, slower close: no flutter
+  const au = $("au"), p = au.duration ? lim(au.currentTime / au.duration, 0, 0.9999) : 0;
+  if (bd.total) { const tg = p * bd.total; let i = 0; while (i < bd.lines.length - 1 && bd.cum[i] <= tg) i++; const pv = i ? bd.cum[i - 1] : 0; rd = { on: true, idx: i, frac: lim((tg - pv) / (bd.cum[i] - pv), 0, 1) }; }
   drawChar(sm, sm, performance.now() / 1000); requestAnimationFrame(loop);
 }
 function startRec() {
@@ -257,7 +285,7 @@ function startRec() {
   rec.start();
 }
 async function play() { setupAudio(); await ac.resume(); $("au").currentTime = 0; playing = true; sm = 0; peak = 0.05; startRec(); await $("au").play(); loop(); }
-$("au").addEventListener("ended", () => { playing = false; if (rec && rec.state !== "inactive") rec.stop(); });
+$("au").addEventListener("ended", () => { playing = false; rd.on = false; if (rec && rec.state !== "inactive") rec.stop(); });
 $("replay").onclick = () => play();
 $("go").addEventListener("click", async () => {
   const msg = $("msg"), text = $("text").value.trim(); msg.className = "";
@@ -268,7 +296,7 @@ $("go").addEventListener("click", async () => {
     const res = await fetch("/generate", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ text, tone: $("tone").value, language: $("lang").value, raw: $("raw").checked }) });
     const d = await res.json(); if (!res.ok) throw new Error(d.error || "Request failed");
-    $("script").textContent = d.script; $("au").src = d.audio_url; $("au").hidden = false; $("replay").hidden = false; msg.textContent = "";
+    $("script").textContent = d.script; setBoard(d.script); rd = { on: false, idx: 0, frac: 0 }; $("au").src = d.audio_url; $("au").hidden = false; $("replay").hidden = false; msg.textContent = "";
     await new Promise((r) => { $("au").onloadeddata = r; $("au").load(); }); await play();
   } catch (err) { msg.textContent = err.message; msg.className = "err"; }
   finally { $("go").disabled = false; }
