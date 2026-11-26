@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 const cv = $("cv"), ctx = cv.getContext("2d"), fcv = $("fcv"), fctx = fcv.getContext("2d");
 const off = document.createElement("canvas"), octx = off.getContext("2d"), hc = document.createElement("canvas"), hctx = hc.getContext("2d");
-const CW = 640, CH = 720, HPS = 2.5, MWD = 46, lim = (v, a, b) => Math.max(a, Math.min(b, v));
+const CW = 640, CH = 720, HPS = 2.5, MWD = 60, lim = (v, a, b) => Math.max(a, Math.min(b, v));
 let ac, an, buf, fbuf, dest, rec, chunks = [], sm = 0, gs = 0, hi = 0.5, peak = 0.05, playing = false;
 let faceImg = null, fm = null, marks = [], pscale = 1, skin = "#f0c9a0", skinD = "#b9835c", bgRGB = [255, 255, 255], cut = null, cutKey = "";
 $("text").value = sessionStorage.getItem("cm_text") || "";
@@ -22,9 +22,10 @@ function patchColor(px, py) {                              // average colour of 
   const sx = lim(px - 4, 0, faceImg.width - 8), sy = lim(py - 4, 0, faceImg.height - 8);
   x.drawImage(faceImg, sx, sy, 8, 8, 0, 0, 1, 1); return Array.from(x.getImageData(0, 0, 1, 1).data).slice(0, 3);
 }
-function sampleSkin() {                                   // neck and hands take the skin colour of the picture (cheek)
+function sampleSkin() {                                   // skin colour = median of 5 patches on the lower face (ignores hair / shadow)
   try {
-    const d = patchColor(fm.x - fm.w * 0.5, fm.y - fm.w * 0.3);
+    const w = fm.w, ps = [[0, 0.65], [-0.8, -0.05], [0.8, -0.05], [0, -0.45], [-0.45, 0.4]].map(([dx, dy]) => patchColor(fm.x + dx * w, fm.y + dy * w));
+    const med = (i) => ps.map((p) => p[i]).sort((x, y) => x - y)[2], d = [med(0), med(1), med(2)];
     skin = `rgb(${d[0]},${d[1]},${d[2]})`; skinD = `rgb(${(d[0] * 0.78) | 0},${(d[1] * 0.78) | 0},${(d[2] * 0.78) | 0})`;
     const cs = [patchColor(6, 6), patchColor(faceImg.width - 6, 6), patchColor(6, faceImg.height - 6), patchColor(faceImg.width - 6, faceImg.height - 6)];
     bgRGB = [0, 1, 2].map((i) => cs.reduce((s, c) => s + c[i], 0) / 4);        // picture background = colour of the four corners
@@ -50,7 +51,7 @@ function makeCut() {                                       // the head cut out o
     } else {                                               // no background removal: soft oval so there is no box
       for (let py = 0; py < Ny; py++) for (let px = 0; px < Nx; px++) { const nx = (px / Nx - 0.5) * 2, ny = (py / Ny - 0.5) * 2; d[(py * Nx + px) * 4 + 3] *= lim((1 - Math.hypot(nx, ny)) / 0.2, 0, 1); }
     }
-    const c0 = ((fm.y + 0.85 * fm.w - g.y0) / g.ch) * Ny, c1 = ((fm.y + 1.15 * fm.w - g.y0) / g.ch) * Ny;   // fade under the chin
+    const c0 = ((fm.y + 0.78 * fm.w - g.y0) / g.ch) * Ny, c1 = ((fm.y + 1.2 * fm.w - g.y0) / g.ch) * Ny;   // fade under the chin
     for (let py = Math.max(0, Math.floor(c0)); py < Ny; py++) { const f = lim(1 - (py - c0) / (c1 - c0), 0, 1); for (let px = 0; px < Nx; px++) d[(py * Nx + px) * 4 + 3] *= f; }
     x.putImageData(id, 0, 0);
   } catch (_) {}
@@ -112,29 +113,26 @@ function drawHead(open, yw) {
 }
 
 /* ================= arms: gestures with real arm geometry (2-bone IK) ================= */
-const ARM1 = 105, ARM2 = 100, REST_R = [402, 446], REST_L = [238, 446];
-const GEST = [   // hand targets (x, y, hold seconds). board:1 = points at the screen
-  { look: 1, point: 1, board: 1, R: [[430, 332, 0.7], [490, 328, 0.7], [552, 322, 1]] },                     // left -> right along the screen: "this, and this, and that"
-  { look: 1, point: 1, board: 1, R: [[470, 232, 0.9], [472, 272, 0.9], [474, 312, 0.9], [476, 352, 0.9]] },  // down the list
-  { look: 1, point: 1, board: 1, R: [[556, 246, 0.7], [498, 244, 0.7], [440, 242, 1]] },                     // right -> left along the top
-  { R: [[458, 364, 1.5]] },                                                                                   // open hand "here"
-  { R: [[440, 374, 0.9], [478, 350, 0.9]], L: [[200, 374, 0.9], [162, 350, 0.9]] },                           // both hands explaining
-  { R: [[505, 342, 1.3]], L: [[140, 342, 1.3]] },                                                             // arms wide: "all of this"
-  { R: [[436, 318, 0.6], [446, 296, 0.6], [436, 318, 0.6]] },                                                 // small emphasis
-];
 const bd = { lines: [], cum: [], total: 0 };
 let rd = { on: false, idx: 0, frac: 0 };
+const ARM1 = 105, ARM2 = 100, REST_R = [402, 446], REST_L = [238, 446];
+const GEST = [   // natural hand poses (x, y, hold seconds), used when there is no screen text to follow
+  { R: [[458, 364, 1.5]] },                                                                   // open hand "here"
+  { R: [[440, 374, 0.9], [478, 350, 0.9]], L: [[200, 374, 0.9], [162, 350, 0.9]] },           // both hands explaining
+  { R: [[505, 342, 1.3]], L: [[140, 342, 1.3]] },                                             // arms wide
+  { R: [[450, 342, 0.6], [462, 322, 0.6], [450, 342, 0.6]] },                                 // small emphasis
+];
 const arms = { rx: REST_R[0], ry: REST_R[1], lx: REST_L[0], ly: REST_L[1] }, seq = { g: null, wi: 0, until: 0, gap: 0 };
 let lastT = 0, lastG = -1, yaw = 0;
 function updateArms(t, speaking, board, mv, read) {
   const dt = Math.min(0.1, Math.max(0, t - lastT)); lastT = t;
   let tr = REST_R, tl = REST_L;
-  if (read) { tr = [read.x, read.y]; seq.g = { point: !!read.point, look: !!read.look, pseudo: 1 }; }
+  if (read) { tr = [read.x, read.y]; if (read.l) tl = read.l; seq.g = { look: !!read.stick, pseudo: 1 }; }
   else if (speaking) {
     if (seq.g && seq.g.pseudo) seq.g = null;
     if (!seq.g) {
       if (t >= seq.gap) {
-        const pool = GEST.map((_, i) => i).filter((i) => i !== lastG && (board || !GEST[i].board));
+        const pool = GEST.map((_, i) => i).filter((i) => i !== lastG);
         lastG = pool[Math.floor(Math.random() * pool.length)]; seq.g = GEST[lastG]; seq.wi = 0; seq.until = t + seq.g.R[0][2];
       }
     } else if (t > seq.until) {
@@ -144,22 +142,28 @@ function updateArms(t, speaking, board, mv, read) {
     }
     if (seq.g) { tr = seq.g.R[seq.wi]; if (seq.g.L) tl = seq.g.L[seq.wi]; }
   } else seq.g = null;
-  const tx = (a, r) => r[0] + (a[0] - r[0]) * mv, ty = (a, r) => r[1] + (a[1] - r[1]) * mv, k = 1 - Math.exp(-dt * (read ? 8 : 5.5));
+  const tx = (a, r) => r[0] + (a[0] - r[0]) * mv, ty = (a, r) => r[1] + (a[1] - r[1]) * mv, k = 1 - Math.exp(-dt * (read ? 7 : 5));
   arms.rx += (tx(tr, REST_R) - arms.rx) * k; arms.ry += (ty(tr, REST_R) - arms.ry) * k;
   arms.lx += (tx(tl, REST_L) - arms.lx) * k; arms.ly += (ty(tl, REST_L) - arms.ly) * k;
   yaw += ((seq.g && seq.g.look ? 1 : 0) - yaw) * (1 - Math.exp(-dt * 3));      // head turns to the screen, then back to us
 }
-function arm(side, sx, sy, tx, ty, o, point) {
-  let dx = tx - sx, dy = ty - sy, d = Math.hypot(dx, dy);
-  d = lim(d, 45, ARM1 + ARM2 - 2); const a = Math.atan2(dy, dx);
-  const b = Math.acos(lim((ARM1 * ARM1 + d * d - ARM2 * ARM2) / (2 * ARM1 * d), -1, 1)), ea = a + side * b;
-  const ex = sx + Math.cos(ea) * ARM1, ey = sy + Math.sin(ea) * ARM1, wx = sx + Math.cos(a) * d, wy = sy + Math.sin(a) * d;
-  const fl = Math.hypot(wx - ex, wy - ey) || 1, ux = (wx - ex) / fl, uy = (wy - ey) / fl;
+function arm(side, sx, sy, tx, ty, o, stick) {
+  const dx = tx - sx, dy = ty - sy, d = lim(Math.hypot(dx, dy), 60, ARM1 + ARM2 - 4), a = Math.atan2(dy, dx);
+  const b = Math.acos(lim((ARM1 * ARM1 + d * d - ARM2 * ARM2) / (2 * ARM1 * d), -1, 1));
+  const cs = [a + b, a - b].map((ea) => ({ ex: sx + Math.cos(ea) * ARM1, ey: sy + Math.sin(ea) * ARM1 }));
+  const score = (c) => side * (c.ex - 320) + (c.ey >= sy - 6 ? 0 : -1000);     // the elbow always stays outside the body and below the shoulder
+  const e = score(cs[0]) >= score(cs[1]) ? cs[0] : cs[1], ex = e.ex, ey = e.ey;
+  const wx = sx + Math.cos(a) * d, wy = sy + Math.sin(a) * d, fl = Math.hypot(wx - ex, wy - ey) || 1, ux = (wx - ex) / fl, uy = (wy - ey) / fl;
   ctx.lineWidth = 44; ctx.strokeStyle = o.top2 || "rgba(0,0,0,.4)"; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.lineTo(wx, wy); ctx.stroke();
   ctx.lineWidth = 38; ctx.strokeStyle = o.top; ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(ex, ey); ctx.lineTo(wx, wy); ctx.stroke();
   if (o.cuff) { ctx.strokeStyle = o.cuff; ctx.lineWidth = 31; ctx.beginPath(); ctx.moveTo(wx - ux * 12, wy - uy * 12); ctx.lineTo(wx, wy); ctx.stroke(); }
-  if (point) { ctx.strokeStyle = skin; ctx.lineWidth = 9; ctx.beginPath(); ctx.moveTo(wx + ux * 8, wy + uy * 8); ctx.lineTo(wx + ux * 44, wy + uy * 44); ctx.stroke(); }   // pointing finger
-  ctx.fillStyle = skin; ctx.strokeStyle = skinD; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(wx + ux * 14, wy + uy * 14, 14, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  const hx = wx + ux * 14, hy = wy + uy * 14;
+  if (stick) {                                                                 // pointer stick: its tip touches the line being read
+    const sdx = stick.x - hx, sdy = stick.y - hy, sl = Math.hypot(sdx, sdy) || 1, len = Math.min(sl + 4, 400), px = sdx / sl, py = sdy / sl;
+    ctx.strokeStyle = "#b9854a"; ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(hx - px * 22, hy - py * 22); ctx.lineTo(hx + px * len, hy + py * len); ctx.stroke();
+    ctx.fillStyle = "#d33"; ctx.beginPath(); ctx.arc(hx + px * len, hy + py * len, 5, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = skin; ctx.strokeStyle = skinD; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(hx, hy, 14, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
 }
 
 /* ================= the teacher ================= */
@@ -190,10 +194,11 @@ function drawBoard() {
 }
 function drawChar(open, amp, t) {
   const mv = +$("move").value, tone = $("tone").value, o = OUTFIT[tone] || OUT_DEFAULT, board = $("board").checked, g = lim(gs * 2.2, 0, 1);
-  let read = null;                                          // the hand follows the line being spoken, left to right
+  let read = null;                                          // reading: the hand stays relaxed, the stick tip follows the text left to right
   if (board && rd.on && bd.lines.length) {
     const first = Math.floor(rd.idx / 6) * 6, k = rd.idx - first; ctx.font = FONT;
-    read = rd.idx % 4 === 3 ? { x: 458, y: 364 } : { x: TX + 70 + rd.frac * ctx.measureText(bd.lines[rd.idx]).width - 28, y: LY[k] + 40, point: 1, look: 1 };
+    const Tx = TX + 70 + rd.frac * ctx.measureText(bd.lines[rd.idx]).width, Ty = LY[k] + 12;
+    read = rd.idx % 4 === 3 ? { x: 440, y: 372, l: [200, 372] } : { x: 485 + (Tx - 520) * 0.28, y: 365 + (Ty - 290) * 0.3, stick: { x: Tx, y: Ty } };
   }
   updateArms(t, gs > 0.1, board, mv, read);
   const shift = (board ? -70 : 0) + Math.sin(t * 0.8) * 2 * (0.3 + g) * mv, br = Math.sin(t * 1.6) * 2, hasFace = faceImg && fm;
@@ -225,8 +230,7 @@ function drawChar(open, amp, t) {
     for (const sx of [262, 378]) { ctx.beginPath(); ctx.arc(sx, 306 + br, 26, 0, Math.PI * 2); ctx.fillStyle = o.top; ctx.fill(); }
     ctx.strokeStyle = "rgba(0,0,0,.3)"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(320, 296 + br, 20, 0.15 * Math.PI, 0.85 * Math.PI); ctx.stroke();
   }
-  const pointing = !!(seq.g && seq.g.point);
-  arm(1, 378, 298 + br, arms.rx, arms.ry, o, pointing); arm(-1, 262, 298 + br, arms.lx, arms.ly, o, false);
+  arm(1, 378, 298 + br, arms.rx, arms.ry, o, read && read.stick); arm(-1, 262, 298 + br, arms.lx, arms.ly, o, false);
   ctx.save(); ctx.translate(320, 262); ctx.rotate((Math.sin(t * 1.1) * 0.03 * (0.4 + g) + (amp - 0.3) * 0.02 + yaw * 0.05) * mv); ctx.translate(-320, -262 + amp * 2 * mv);
   ctx.strokeStyle = skin; ctx.lineWidth = hasFace ? 36 : 18; ctx.beginPath(); ctx.moveTo(320, hasFace ? 250 : 246); ctx.lineTo(320, 296); ctx.stroke();   // neck
   if (hasFace) drawHead(open, yaw);
