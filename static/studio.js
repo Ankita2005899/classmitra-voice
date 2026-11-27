@@ -1,3 +1,4 @@
+(() => {
 const $ = (id) => document.getElementById(id);
 // colour frames: [bg1, bg2, title, text, accent, frame]
 const PALS = [
@@ -12,6 +13,7 @@ const PALS = [
 ];
 const LABELS = ["Background 1", "Background 2", "Title", "Text", "Accent", "Frame"];
 const ROLE = { title: 2, head: 4, body: 3, free: 3 };
+let scriptText = "";
 let pal = PALS[0][1].slice(), deck = [], selS = null, selE = null, uid = 0, nodes = {}, fileFor = null;
 
 const el = (t, c, x) => { const n = document.createElement(t); if (c) n.className = c; if (x != null) n.textContent = x; return n; };
@@ -38,8 +40,6 @@ PALS.forEach(([name, c], i) => {
 });
 syncPal(); mark(0);
 
-$("text").value = sessionStorage.getItem("cm_text") || "";
-$("lang").value = sessionStorage.getItem("cm_lang") || "english";
 
 /* ---------- build deck from AI result ---------- */
 function fitSize(txt, w, h, hindi, max = 3.2, min = 1.6, bold = false) {
@@ -235,19 +235,42 @@ $("descimg").onclick = async () => {
   const w = await fetchOne(e); $("msg").className = w ? "err" : ""; $("msg").textContent = w ? `Failed (${w})` : "";
 };
 
+/* ---------- one click: file/text -> slides + audio + teacher ---------- */
+async function post(url, obj) {
+  const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(obj) });
+  let d = {}; try { d = await res.json(); } catch (_) {}
+  if (!res.ok) throw new Error(d.error || "Request failed (" + res.status + ")");
+  return d;
+}
 $("go").addEventListener("click", async () => {
-  const text = $("text").value.trim(), msg = $("msg");
-  msg.className = "";
-  if (!text) { msg.textContent = "Please enter some text."; msg.className = "err"; return; }
-  $("go").disabled = true; msg.textContent = "Generating slides… this takes a few seconds.";
+  const msg = $("msg"); msg.className = "";
+  let text = $("text").value.trim(); const f = $("upload").files[0];
+  if (!text && !f) { msg.textContent = "Please type some text or upload a file."; msg.className = "err"; return; }
+  $("go").disabled = true;
   try {
-    const res = await fetch("/analyze", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, language: $("lang").value }) });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || "Request failed");
-    build(data); draw();
-    $("bar").hidden = false; $("hint").hidden = false;
-    msg.textContent = "";
-    await getImgs();
+    if (f) {
+      msg.textContent = "Reading your file…";
+      const fd = new FormData(); fd.append("file", f);
+      const r = await fetch("/extract", { method: "POST", body: fd }); let d = {}; try { d = await r.json(); } catch (_) {}
+      if (!r.ok) throw new Error(d.error || "Could not read the file");
+      text = (text ? text + "\n\n" : "") + d.text;
+    }
+    text = text.slice(0, 8000);
+    msg.textContent = "Creating the slides and the spoken explanation… (about 20 seconds)";
+    const language = $("lang").value, tone = $("tone").value;
+    const [sl, au] = await Promise.allSettled([post("/analyze", { text, language }), post("/generate", { text, tone, language })]);
+    if (au.status === "fulfilled") {
+      $("script").textContent = au.value.script; $("audioSec").hidden = false; $("teacherSec").hidden = false;
+      window.Teacher.prepare(au.value.script, au.value.audio_url); scriptText = au.value.script;
+    }
+    if (sl.status === "fulfilled") { build(sl.value); draw(); $("slidesSec").hidden = false; }
+    if (sl.status === "rejected" && au.status === "rejected") throw sl.reason;
+    const problems = [];
+    if (sl.status === "rejected") problems.push("Slides: " + sl.reason.message);
+    if (au.status === "rejected") problems.push("Audio/teacher: " + au.reason.message);
+    msg.textContent = problems.join("  |  "); msg.className = problems.length ? "err" : "";
+    $("slidesSec").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (sl.status === "fulfilled") await getImgs();
   } catch (err) { msg.textContent = err.message; msg.className = "err"; }
   finally { $("go").disabled = false; }
 });
@@ -277,7 +300,18 @@ $("dl").addEventListener("click", async () => {
   finally { btn.disabled = false; btn.textContent = old; }
 });
 
-$("nextTalk").addEventListener("click", () => {
-  sessionStorage.setItem("cm_text", $("text").value.trim());
-  sessionStorage.setItem("cm_lang", $("lang").value);
+$("dlp").addEventListener("click", async () => {
+  const btn = $("dlp"), old = btn.textContent, msg = $("msg"); btn.disabled = true; btn.textContent = "Building PowerPoint…"; msg.className = "";
+  try {
+    const col = (e) => (e.custom ? e.color : pal[ROLE[e.role]]);
+    const slides = deck.map((s) => ({ bg: s.bg || null, els: s.els.map((e) => e.type === "text"
+      ? { type: "text", x: e.x, y: e.y, w: e.w, h: e.h, text: e.text, size: e.size, bold: e.bold, align: e.align, color: col(e) }
+      : { type: "img", x: e.x, y: e.y, w: e.w, h: e.h, src: e.src || null, fit: e.fit }) }));
+    const res = await fetch("/pptx", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ slides, pal, script: scriptText }) });
+    if (!res.ok) { let d = {}; try { d = await res.json(); } catch (_) {} throw new Error(d.error || "PowerPoint export failed"); }
+    const a = el("a"); a.href = URL.createObjectURL(await res.blob()); a.download = "classmitra-slides.pptx"; a.click();
+  } catch (e) { msg.textContent = e.message; msg.className = "err"; }
+  finally { btn.disabled = false; btn.textContent = old; }
 });
+
+})();

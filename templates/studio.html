@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ClassMitra Studio</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='studio.css') }}">
+</head>
+<body>
+<main class="wide">
+  <h1>ClassMitra Studio</h1>
+  <p class="sub">Type your lesson or upload a file. You get slides with images (and a PowerPoint file), a spoken explanation, and a teacher who explains it.</p>
+
+  <label for="text">Your text</label>
+  <textarea id="text" maxlength="8000" placeholder="Paste or type your topic or lesson here"></textarea>
+
+  <label for="upload">…or upload a file instead of (or with) the text</label>
+  <input type="file" id="upload" accept=".pptx,.docx,.pdf,.png,.jpg,.jpeg,.webp,.txt,.md">
+  <p class="hint">Allowed files: PowerPoint (.pptx), Word (.docx), PDF (.pdf), images (.png .jpg .jpeg .webp) and text (.txt .md). Up to 15 MB. Old .ppt and .doc files are not supported: save them as .pptx or .docx first.</p>
+
+  <div class="row3">
+    <div><label for="lang">Language</label>
+      <select id="lang"><option value="english">English</option><option value="hindi">हिन्दी</option></select></div>
+    <div><label for="tone">Character (voice + look)</label>
+      <select id="tone">{% for t in tones %}<option value="{{ t }}">{{ t|capitalize }}</option>{% endfor %}</select></div>
+    <div><label for="imgstyle">Slide images</label>
+      <select id="imgstyle">
+        <option value="2d">2D illustration</option>
+        <option value="3d">3D render</option>
+        <option value="cinematic">Cinematic (4D look)</option>
+        <option value="photo">Real photos</option>
+        <option value="none">No images</option>
+      </select></div>
+  </div>
+
+  <label>Slide colour frame (6 colours each)</label>
+  <div class="frames" id="frames"></div>
+  <label>Or make your own colours</label>
+  <div class="custom" id="custom"></div>
+
+  <button id="go" class="go">Generate slides, audio and teacher</button>
+  <p id="msg" role="status"></p>
+
+  <section id="slidesSec" hidden>
+    <h2>1. Slides</h2>
+    <div id="bar" data-k="none">
+      <button id="addS">+ Slide</button><button id="addT">+ Text</button><button id="addI">+ Image / Logo</button><button id="retry">Retry images</button>
+      <button id="delS">Delete slide</button>
+      <label class="cl">Slide bg <input type="color" id="bgc"></label>
+      <span class="ti"><button id="szD">A−</button><button id="szU">A+</button><button id="bold"><b>B</b></button><button id="aln">Align</button>
+        <label class="cl">Text <input type="color" id="tc"></label></span>
+      <span class="ii"><button id="newimg">New image</button><button id="descimg">Describe image</button><button id="rep">Upload image</button><button id="fit">Fill / Fit</button></span>
+      <button class="ai" id="del">Delete selected</button>
+      <button id="dlp" class="dl">Download PowerPoint (.pptx)</button>
+      <button id="dl" class="dl2">Download images (ZIP)</button>
+    </div>
+    <p class="hint">Click to select · drag to move · drag the blue corner to resize · double-click text to edit · Delete key removes</p>
+    <div id="slides"></div>
+  </section>
+
+  <section id="audioSec" hidden>
+    <h2>2. Spoken explanation</h2>
+    <audio id="au" controls></audio>
+    <p id="script"></p>
+  </section>
+
+  <section id="teacherSec" hidden>
+    <h2>3. Teacher explains</h2>
+    <canvas id="tcv" width="640" height="720"></canvas>
+    <div class="acts"><button id="tplay" class="go2" type="button">▶ Play teacher</button><a id="tdl" hidden download="teacher-explains.webm">Download video (WebM)</a></div>
+    <p id="tmsg" role="status"></p>
+    <label class="chk"><input type="checkbox" id="tboard" checked> Show the screen behind the teacher (the teacher follows the text with a pointer)</label>
+    <div class="row">
+      <div><label for="tstrength">Mouth opening</label><input type="range" id="tstrength" min="0.5" max="2" step="0.1" value="1"></div>
+      <div><label for="tmove">Hand / body movement</label><input type="range" id="tmove" min="0" max="1.5" step="0.1" value="1"></div>
+    </div>
+  </section>
+</main>
+<input type="file" id="file" accept="image/*" hidden>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="{{ url_for('static', filename='teacher.js') }}"></script>
+<script src="{{ url_for('static', filename='studio.js') }}"></script>
+</body>
+</html>

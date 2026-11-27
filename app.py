@@ -1,5 +1,5 @@
-import os, re, uuid, time, glob, asyncio, json, base64, threading, urllib.request, urllib.parse, urllib.error
-from flask import Flask, render_template, request, jsonify
+import os, io, re, uuid, time, glob, asyncio, json, base64, threading, urllib.request, urllib.parse, urllib.error
+from flask import Flask, render_template, request, jsonify, send_file
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types, errors
@@ -7,18 +7,25 @@ import edge_tts
 
 load_dotenv()
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 40 * 1024 * 1024
 
 AUDIO_DIR = os.path.join(app.static_folder, "audio")
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
-MAX_CHARS = 1500
+MAX_CHARS = 8000
 
 # tone -> (persona instruction, english voice, hindi voice)
 TONES = {
     "teacher": (
         "a warm, patient school teacher. Explain step by step, give one simple example, end with a one-line recap.",
+        "en-IN-NeerjaNeural", "hi-IN-SwaraNeural"),
+    "principal": (
+        "a respectful school principal addressing the students: calm, confident and encouraging. Explain clearly, then close with one motivating line.",
+        "en-IN-PrabhatNeural", "hi-IN-MadhurNeural"),
+    "scientist": (
+        "an enthusiastic scientist. Explain using evidence, a simple experiment or observation, and curiosity.",
         "en-IN-NeerjaNeural", "hi-IN-SwaraNeural"),
     "farmer": (
         "a wise, down-to-earth village farmer. Explain using farming, soil, seasons, crops and rural life examples.",
@@ -89,7 +96,7 @@ def make_audio_retry(script, voice, path, lang="english"):
 
 @app.route("/")
 def index():
-    return render_template("index.html", tones=list(TONES.keys()))
+    return render_template("studio.html", tones=list(TONES.keys()))
 
 
 @app.route("/generate", methods=["POST"])
@@ -145,16 +152,6 @@ def _img_item(v):
     v = v if isinstance(v, dict) else {}
     return {"query": str(v.get("query") or "").strip()[:60], "prompt": str(v.get("prompt") or "").strip()[:300],
             "emoji": str(v.get("emoji") or "").strip()[:8]}
-
-
-@app.route("/talk")
-def talk():
-    return render_template("talk.html", tones=list(TONES.keys()))
-
-
-@app.route("/screen")
-def screen():
-    return render_template("screen.html")
 
 
 @app.route("/analyze", methods=["POST"])
@@ -221,6 +218,182 @@ def analyze():
         example=str(d.get("example") or "").strip(),
         images={k: _img_item((d.get("images") or {}).get(k)) for k in IMG_KEYS},
     )
+
+
+
+ALLOWED_EXT = {".pptx", ".docx", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".md"}
+IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
+
+
+def text_from_pptx(raw):
+    from pptx import Presentation
+    prs, out = Presentation(io.BytesIO(raw)), []
+    for i, sl in enumerate(prs.slides, 1):
+        parts = []
+        for sh in sl.shapes:
+            if sh.has_text_frame and sh.text_frame.text.strip():
+                parts.append(sh.text_frame.text.strip())
+            if getattr(sh, "has_table", False) and sh.has_table:
+                for row in sh.table.rows:
+                    parts.append(" | ".join(c.text.strip() for c in row.cells if c.text.strip()))
+        if sl.has_notes_slide and sl.notes_slide.notes_text_frame.text.strip():
+            parts.append(sl.notes_slide.notes_text_frame.text.strip())
+        if parts:
+            out.append("Slide %d:\n%s" % (i, "\n".join(parts)))
+    return "\n\n".join(out)
+
+
+def text_from_docx(raw):
+    import docx
+    d, out = docx.Document(io.BytesIO(raw)), []
+    out += [p.text.strip() for p in d.paragraphs if p.text.strip()]
+    for t in d.tables:
+        for row in t.rows:
+            cells = [c.text.strip() for c in row.cells if c.text.strip()]
+            if cells:
+                out.append(" | ".join(cells))
+    return "\n".join(out)
+
+
+def text_from_pdf(raw):
+    from pypdf import PdfReader
+    rd = PdfReader(io.BytesIO(raw))
+    return "\n".join((p.extract_text() or "") for p in rd.pages[:40]).strip()
+
+
+def gemini_read(raw, mime):
+    """Images and scanned PDFs: let Gemini read the text and describe the content."""
+    resp = client.models.generate_content(
+        model=MODEL,
+        contents=[types.Part.from_bytes(data=raw, mime_type=mime),
+                  "Extract all readable text from this file, in reading order. If it is a diagram, chart or photo, "
+                  "describe what it shows in a few clear sentences so it can be taught as a lesson. Plain text only."],
+        config=types.GenerateContentConfig(max_output_tokens=4096),
+    )
+    return (resp.text or "").strip()
+
+
+@app.route("/extract", methods=["POST"])
+def extract():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        return jsonify(error="No file received."), 400
+    ext = os.path.splitext(f.filename)[1].lower()
+    if ext not in ALLOWED_EXT:
+        return jsonify(error="This file type is not supported. Allowed: PowerPoint (.pptx), Word (.docx), PDF (.pdf), "
+                             "images (.png .jpg .jpeg .webp), text (.txt .md). Old .ppt / .doc files: save them as .pptx / .docx first."), 400
+    raw = f.read()
+    if len(raw) > 15 * 1024 * 1024:
+        return jsonify(error="The file is larger than 15 MB."), 400
+    try:
+        if ext == ".pptx":
+            text = text_from_pptx(raw)
+        elif ext == ".docx":
+            text = text_from_docx(raw)
+        elif ext == ".pdf":
+            text = text_from_pdf(raw)
+            if len(text) < 40:
+                text = gemini_read(raw, "application/pdf")
+        elif ext in IMG_MIME:
+            text = gemini_read(raw, IMG_MIME[ext])
+        else:
+            text = raw.decode("utf-8", "ignore")
+    except errors.APIError as e:
+        return api_error_response(e)
+    except ImportError as e:
+        return jsonify(error="A library is missing (%s). Run: pip install -r requirements.txt" % e.name), 500
+    except Exception as e:
+        app.logger.exception(e)
+        return jsonify(error="Could not read this file (%s: %s)." % (type(e).__name__, str(e)[:120])), 500
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    if not text:
+        return jsonify(error="No readable text was found in this file."), 400
+    return jsonify(text=text[:MAX_CHARS], name=f.filename, truncated=len(text) > MAX_CHARS)
+
+
+@app.route("/pptx", methods=["POST"])
+def pptx_export():
+    """Build a real PowerPoint file from the slides as they are in the editor."""
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches, Pt
+        from pptx.dml.color import RGBColor
+        from pptx.enum.text import PP_ALIGN
+        from pptx.enum.shapes import MSO_SHAPE
+        from PIL import Image
+    except ImportError as e:
+        return jsonify(error="A library is missing (%s). Run: pip install -r requirements.txt" % e.name), 500
+    data = request.get_json(silent=True) or {}
+    slides = data.get("slides") or []
+    pal = data.get("pal") or ["#1b2a49", "#0d1730", "#ffffff", "#dbe3f0", "#c8a24a", "#2a3d66"]
+    if not slides:
+        return jsonify(error="There are no slides to export."), 400
+    WI, HI = 13.333, 7.5
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(WI), Inches(HI)
+
+    def rgb(h):
+        h = str(h or "#000000").lstrip("#")
+        return RGBColor.from_string((h + "000000")[:6].upper())
+
+    for n, s in enumerate(slides, 1):
+        sl = prs.slides.add_slide(prs.slide_layouts[6])
+        fill = sl.background.fill
+        if s.get("bg"):
+            fill.solid(); fill.fore_color.rgb = rgb(s["bg"])
+        else:
+            fill.gradient(); fill.gradient_angle = 315
+            st = fill.gradient_stops
+            st[0].color.rgb, st[0].position = rgb(pal[0]), 0
+            st[1].color.rgb, st[1].position = rgb(pal[1]), 1
+        bar = sl.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(0.14), prs.slide_height)
+        bar.fill.solid(); bar.fill.fore_color.rgb = rgb(pal[4]); bar.line.fill.background()
+        for e in s.get("els", []):
+            x, y, w, h = [float(e.get(k, 0) or 0) for k in ("x", "y", "w", "h")]
+            L, T, W, H = Inches(WI * x / 100), Inches(HI * y / 100), Inches(WI * w / 100), Inches(HI * h / 100)
+            if e.get("type") == "text":
+                tb = sl.shapes.add_textbox(L, T, W, H)
+                tf = tb.text_frame; tf.word_wrap = True
+                tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+                for i, line in enumerate(str(e.get("text", "")).split("\n")):
+                    p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+                    p.alignment = {"center": PP_ALIGN.CENTER, "right": PP_ALIGN.RIGHT}.get(e.get("align"), PP_ALIGN.LEFT)
+                    p.space_after = Pt(6)
+                    r = p.add_run(); r.text = line
+                    r.font.size = Pt(max(8, float(e.get("size", 3) or 3) * 9.6))
+                    r.font.bold = bool(e.get("bold")); r.font.color.rgb = rgb(e.get("color")); r.font.name = "Segoe UI"
+            elif e.get("type") == "img" and e.get("src"):
+                try:
+                    im = Image.open(io.BytesIO(base64.b64decode(e["src"].split(",", 1)[1])))
+                    im = im.convert("RGBA" if e.get("fit") == "contain" else "RGB")
+                    bw, bh = W / 914400 * 150, H / 914400 * 150          # target pixels at 150 dpi
+                    if e.get("fit") == "contain":
+                        im.thumbnail((int(bw), int(bh)))
+                        pw, ph = im.size
+                        L2, T2 = L + int((W - Inches(pw / 150)) / 2), T + int((H - Inches(ph / 150)) / 2)
+                        W2, H2 = Inches(pw / 150), Inches(ph / 150)
+                    else:                                                  # cover: crop to the box shape
+                        ar, iw, ih = bw / bh, im.width, im.height
+                        if iw / ih > ar:
+                            nw = int(ih * ar); im = im.crop(((iw - nw) // 2, 0, (iw - nw) // 2 + nw, ih))
+                        else:
+                            nh = int(iw / ar); im = im.crop((0, (ih - nh) // 2, iw, (ih - nh) // 2 + nh))
+                        L2, T2, W2, H2 = L, T, W, H
+                    buf = io.BytesIO(); im.save(buf, "PNG" if im.mode == "RGBA" else "JPEG", **({} if im.mode == "RGBA" else {"quality": 92})); buf.seek(0)
+                    pic = sl.shapes.add_picture(buf, L2, T2, W2, H2)
+                    pic.line.color.rgb = rgb(pal[5]); pic.line.width = Pt(3)
+                except Exception as ex:
+                    app.logger.warning("pptx image skipped: %s", ex)
+        ft = sl.shapes.add_textbox(Inches(WI - 3.3), Inches(HI - 0.5), Inches(3), Inches(0.3))
+        fr = ft.text_frame.paragraphs[0]; fr.alignment = PP_ALIGN.RIGHT
+        bgc = str(s.get("bg") or "").lstrip("#")
+        light = len(bgc) == 6 and (0.299 * int(bgc[0:2], 16) + 0.587 * int(bgc[2:4], 16) + 0.114 * int(bgc[4:6], 16)) > 150
+        r = fr.add_run(); r.text = "ClassMitra  %d/%d" % (n, len(slides)); r.font.size = Pt(10); r.font.color.rgb = rgb("#555555" if light else pal[3])
+    if data.get("script"):
+        prs.slides[0].notes_slide.notes_text_frame.text = str(data["script"])[:4000]
+    bio = io.BytesIO(); prs.save(bio); bio.seek(0)
+    return send_file(bio, as_attachment=True, download_name="classmitra-slides.pptx",
+                     mimetype="application/vnd.openxmlformats-officedocument.presentationml.presentation")
 
 
 _img_cache = {}
