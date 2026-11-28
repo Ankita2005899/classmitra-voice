@@ -43,6 +43,28 @@ TONES = {
 LANGS = {"english": "English", "hindi": "Hindi (Devanagari script)"}
 
 
+FALLBACK_MODELS = [m.strip() for m in os.getenv("GEMINI_FALLBACK_MODELS", "gemini-3.5-flash,gemini-flash-latest").split(",") if m.strip()]
+
+
+def gemini_call(**kw):
+    """Gemini with patience: retries when Google is busy (503/500/504/429) and then tries backup models."""
+    kw.pop("model", None)
+    models, last = [MODEL] + [m for m in FALLBACK_MODELS if m != MODEL], None
+    for mi, m in enumerate(models):
+        for attempt in range(3 if mi == 0 else 2):
+            try:
+                return client.models.generate_content(model=m, **kw)
+            except errors.APIError as e:
+                last = e
+                if e.code in (500, 502, 503, 504):
+                    app.logger.warning("Gemini %s busy (%s), retry %d", m, e.code, attempt + 1)
+                    time.sleep(1.5 * (attempt + 1)); continue
+                if e.code in (404, 429):              # unknown model for this key / quota: go to the next model
+                    break
+                raise
+    raise last
+
+
 def cleanup_old_audio(max_age=3600):
     for f in glob.glob(os.path.join(AUDIO_DIR, "*.mp3")):
         if time.time() - os.path.getmtime(f) > max_age:
@@ -56,7 +78,7 @@ def make_script(text, tone, lang):
         "Keep the facts correct. Keep it under 150 words. "
         "Output plain spoken text only: no markdown, no bullet points, no emojis, no stage directions."
     )
-    resp = client.models.generate_content(
+    resp = gemini_call(
         model=MODEL, contents=text,
         config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=2048),
     )
@@ -189,7 +211,7 @@ def analyze():
         "Do not invent facts that are not supported by the text or common knowledge."
     )
     try:
-        resp = client.models.generate_content(
+        resp = gemini_call(
             model=MODEL, contents=text,
             config=types.GenerateContentConfig(
                 system_instruction=system, max_output_tokens=1500,
@@ -272,7 +294,7 @@ def lesson():
         "hint = one short sentence that helps without giving the answer away."
     )
     try:
-        resp = client.models.generate_content(
+        resp = gemini_call(
             model=MODEL, contents=json.dumps(outline, ensure_ascii=False),
             config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=8192, response_mime_type="application/json"))
         raw = (resp.text or "").strip().removeprefix("```json").removesuffix("```").strip()
@@ -347,7 +369,7 @@ def text_from_pdf(raw):
 
 def gemini_read(raw, mime):
     """Images and scanned PDFs: let Gemini read the text and describe the content."""
-    resp = client.models.generate_content(
+    resp = gemini_call(
         model=MODEL,
         contents=[types.Part.from_bytes(data=raw, mime_type=mime),
                   "Extract all readable text from this file, in reading order. If it is a diagram, chart or photo, "
