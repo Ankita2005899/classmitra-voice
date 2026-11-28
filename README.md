@@ -4,7 +4,7 @@ One page. Type your lesson or upload a file, click one button, and get:
 
 1. **Slides** with a matching image on every slide: editable (move, resize, recolour, upload images or logos), downloadable as a real **PowerPoint (.pptx)** or as PNG images.
 2. **A spoken explanation** in the voice of the character you choose (teacher, principal, scientist, farmer, cricketer, shopkeeper, storyteller).
-3. **A teacher who explains it**: the text appears on a screen behind him and he follows it with a pointer stick while the mouth moves with the voice. Download the clip as WebM.
+3. **A teacher who teaches your slides**: each slide appears on the screen behind him, he explains it point by point with a laser pointer, then asks one question about that slide. The next slide starts only after a correct answer. At the end you get your score. Download the lesson as a WebM video.
 
 Input: text, or a file: PowerPoint (.pptx), Word (.docx), PDF (.pdf), images (.png .jpg .jpeg .webp), text (.txt .md), up to 15 MB.
 

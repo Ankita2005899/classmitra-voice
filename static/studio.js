@@ -260,17 +260,20 @@ $("go").addEventListener("click", async () => {
     const language = $("lang").value, tone = $("tone").value;
     const [sl, au] = await Promise.allSettled([post("/analyze", { text, language }), post("/generate", { text, tone, language })]);
     if (au.status === "fulfilled") {
-      $("script").textContent = au.value.script; $("audioSec").hidden = false; $("teacherSec").hidden = false;
-      window.Teacher.prepare(au.value.script, au.value.audio_url); scriptText = au.value.script;
+      $("script").textContent = au.value.script; $("audioSec").hidden = false; scriptText = au.value.script;
+      $("au").src = au.value.audio_url;
     }
-    if (sl.status === "fulfilled") { build(sl.value); draw(); $("slidesSec").hidden = false; }
+    if (sl.status === "fulfilled") {
+      build(sl.value); draw(); $("slidesSec").hidden = false; $("teacherSec").hidden = false;
+      window.Teacher.refresh(); fetchLesson().catch(() => {});                  // the lesson (what the teacher says + the questions) is prepared in the background
+    }
     if (sl.status === "rejected" && au.status === "rejected") throw sl.reason;
     const problems = [];
     if (sl.status === "rejected") problems.push("Slides: " + sl.reason.message);
     if (au.status === "rejected") problems.push("Audio/teacher: " + au.reason.message);
     msg.textContent = problems.join("  |  "); msg.className = problems.length ? "err" : "";
     $("slidesSec").scrollIntoView({ behavior: "smooth", block: "start" });
-    if (sl.status === "fulfilled") await getImgs();
+    if (sl.status === "fulfilled") { await getImgs(); window.Teacher.refresh(); }
   } catch (err) { msg.textContent = err.message; msg.className = "err"; }
   finally { $("go").disabled = false; }
 });
@@ -314,4 +317,34 @@ $("dlp").addEventListener("click", async () => {
   finally { btn.disabled = false; btn.textContent = old; }
 });
 
+
+/* ---------- data for the teacher: the slides as they are now + the lesson (speech and questions) ---------- */
+const EMOJI = /\p{Extended_Pictographic}\uFE0F?/gu;
+function lessonData() {
+  const col = (e) => (e.custom ? e.color : pal[ROLE[e.role]]);
+  const slides = deck.map((s) => ({ bg: s.bg || null, els: s.els.map((e) => e.type === "text"
+    ? { type: "text", role: e.role, x: e.x, y: e.y, w: e.w, h: e.h, text: e.text, size: e.size, bold: e.bold, align: e.align, color: col(e) }
+    : { type: "img", x: e.x, y: e.y, w: e.w, h: e.h, src: e.src || null, fit: e.fit, q: e.q || "" }) }));
+  const clean = (t) => t.replace(EMOJI, "").replace(/\s+/g, " ").trim() || t.trim();
+  const points = slides.map((s) => {                                         // same order as the pointer targets the teacher builds from the same slides
+    const out = [];
+    s.els.forEach((e) => {
+      if (e.type === "img") out.push({ kind: "image", text: e.q || "the picture" });
+      else if (e.role === "title" || e.role === "head") { if (e.text.trim()) out.push({ kind: "title", text: clean(e.text) }); }
+      else e.text.split("\n").forEach((l) => { if (l.trim()) out.push({ kind: "point", text: clean(l) }); });
+    });
+    return out;
+  });
+  return { pal, slides, points };
+}
+let lessonCache = null;
+async function fetchLesson() {
+  const d = lessonData(), tone = $("tone").value, language = $("lang").value, key = JSON.stringify([d.points, tone, language]);
+  if (lessonCache && lessonCache.key === key) return lessonCache.promise;
+  const promise = post("/lesson", { points: d.points, tone, language });
+  lessonCache = { key, promise }; promise.catch(() => { if (lessonCache && lessonCache.key === key) lessonCache = null; });
+  return promise;
+}
+window.Studio = { lessonData, fetchLesson };
 })();
+

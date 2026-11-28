@@ -61,7 +61,7 @@ input[type=color]{width:34px;height:28px;border:1px solid var(--line);background
 
 a.next{display:block;text-align:center;text-decoration:none;margin-top:22px}
 
-#tcv{display:block;width:100%;max-width:640px;margin-top:10px;border-radius:12px;border:1px solid var(--line);background:#000;cursor:crosshair}
+#tcv{display:block;width:100%;max-width:960px;margin-top:10px;border-radius:12px;border:1px solid var(--line);background:#000}
 .row{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .hint{color:var(--muted);font-size:.85rem;margin:8px 0 0}
 .hint button,#replay{background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:5px 12px;font:inherit;cursor:pointer}

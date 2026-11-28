@@ -221,6 +221,90 @@ def analyze():
 
 
 
+
+def clean_for_tts(text):
+    return re.sub(r"[*_#`>~|]+", " ", str(text)).strip()
+
+
+@app.route("/tts", methods=["POST"])
+def tts():
+    """One short piece of speech (a slide's narration or a question) in the chosen character's voice."""
+    data = request.get_json(silent=True) or {}
+    text = clean_for_tts((data.get("text") or ""))[:1500]
+    tone, lang = data.get("tone", "teacher"), data.get("language", "english")
+    if not text:
+        return jsonify(error="Nothing to say."), 400
+    if tone not in TONES or lang not in LANGS:
+        tone, lang = "teacher", "english"
+    try:
+        voice = TONES[tone][1] if lang == "english" else TONES[tone][2]
+        cleanup_old_audio()
+        name = f"{uuid.uuid4().hex}.mp3"
+        make_audio_retry(text, voice, os.path.join(AUDIO_DIR, name), lang)
+        return jsonify(audio_url=f"/static/audio/{name}")
+    except Exception as e:
+        app.logger.exception(e)
+        return jsonify(error="Voice problem (%s): %s" % (type(e).__name__, str(e)[:160])), 500
+
+
+@app.route("/lesson", methods=["POST"])
+def lesson():
+    """For every slide: what the teacher says about each point (in order) + one multiple-choice question."""
+    import random
+    data = request.get_json(silent=True) or {}
+    points = data.get("points") or []
+    tone, lang = data.get("tone", "teacher"), data.get("language", "english")
+    if not points or not isinstance(points, list):
+        return jsonify(error="There are no slides to teach."), 400
+    if tone not in TONES or lang not in LANGS:
+        tone, lang = "teacher", "english"
+    outline = [{"slide": i + 1, "points": [{"n": j + 1, "type": p.get("kind", "point"), "text": str(p.get("text", ""))[:300]}
+                                           for j, p in enumerate(sl)]} for i, sl in enumerate(points[:20])]
+    system = (
+        "You are " + TONES[tone][0] + " You are teaching a slide show to students, speaking in " + LANGS[lang] + ". "
+        "The user sends a JSON list of slides; each slide has numbered points (type title, point or image). "
+        'Return ONLY JSON: {"slides":[{"parts":[...],"question":"...","options":["...","...","...","..."],"answer":0,"hint":"..."}]}. '
+        "Rules: exactly one entry per input slide, in order. parts = exactly one string per point of that slide, in the same order; "
+        "each part is 1-2 spoken sentences (max 35 words) explaining THAT point in your own voice; for an image point say what the picture shows; "
+        "the very first part of the first slide may greet the class. No markdown, no emojis, no stage directions. "
+        "question = ONE multiple-choice question about what was taught on that slide only, answerable from what you said. "
+        "options = exactly 4 short options (max 8 words each), only one correct. answer = index 0-3 of the correct option. "
+        "hint = one short sentence that helps without giving the answer away."
+    )
+    try:
+        resp = client.models.generate_content(
+            model=MODEL, contents=json.dumps(outline, ensure_ascii=False),
+            config=types.GenerateContentConfig(system_instruction=system, max_output_tokens=8192, response_mime_type="application/json"))
+        raw = (resp.text or "").strip().removeprefix("```json").removesuffix("```").strip()
+        d = json.loads(raw)
+    except errors.APIError as e:
+        return api_error_response(e)
+    except (json.JSONDecodeError, ValueError):
+        return jsonify(error="Could not read the lesson from the AI. Please try again."), 500
+    except Exception as e:
+        app.logger.exception(e)
+        return jsonify(error="Lesson problem (%s): %s" % (type(e).__name__, str(e)[:140])), 500
+    out = []
+    items = d.get("slides") if isinstance(d, dict) else d
+    for i, sl in enumerate(outline):
+        it = (items[i] if isinstance(items, list) and i < len(items) else {}) or {}
+        parts = [clean_for_tts(p) for p in (it.get("parts") or []) if str(p).strip()]
+        opts = [str(o).strip()[:90] for o in (it.get("options") or []) if str(o).strip()][:4]
+        try:
+            ans = int(it.get("answer", 0))
+        except (TypeError, ValueError):
+            ans = 0
+        if len(opts) < 2 or not (0 <= ans < len(opts)):
+            opts, ans = ["True", "False"], 0
+            question = "Was this slide about: " + (sl["points"][0]["text"] if sl["points"] else "this topic") + "?"
+        else:
+            question = str(it.get("question") or "").strip()[:260] or "Which answer is correct?"
+        order = list(range(len(opts))); random.shuffle(order)               # the right answer is not always in the same place
+        out.append({"parts": parts, "question": question, "options": [opts[k] for k in order],
+                    "answer": order.index(ans), "hint": str(it.get("hint") or "").strip()[:200]})
+    return jsonify(slides=out)
+
+
 ALLOWED_EXT = {".pptx", ".docx", ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".txt", ".md"}
 IMG_MIME = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".webp": "image/webp"}
 
